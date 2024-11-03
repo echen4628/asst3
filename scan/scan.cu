@@ -27,6 +27,58 @@ static inline int nextPow2(int n) {
     return n;
 }
 
+
+// This is the CUDA "kernel" function that is run on the GPU.  You
+// know this because it is marked as a __global__ function.
+__global__ void
+upsweep_kernel(int N, int two_d, int two_dplus1, int* output) {
+
+    // compute overall thread index from position of thread in current
+    // block, and given the block we are in (in this example only a 1D
+    // calculation is needed so the code only looks at the .x terms of
+    // blockDim and threadIdx.
+    int index = (blockIdx.x * blockDim.x + threadIdx.x)*two_dplus1;
+
+
+    // this check is necessary to make the code work for values of N
+    // that are not a multiple of the thread block size (blockDim.x)
+    if (index < N)
+        output[index+two_dplus1-1] += output[index+two_d-1];
+}
+
+__global__ void
+downsweep_kernel(int N, int two_d, int two_dplus1, int* output) {
+
+    // compute overall thread index from position of thread in current
+    // block, and given the block we are in (in this example only a 1D
+    // calculation is needed so the code only looks at the .x terms of
+    // blockDim and threadIdx.
+    int index = (blockIdx.x * blockDim.x + threadIdx.x)*two_dplus1;
+
+
+    // this check is necessary to make the code work for values of N
+    // that are not a multiple of the thread block size (blockDim.x)
+    if (index < N) {
+        int t = output[index+two_d-1];
+        output[index+two_d-1] = output[index+two_dplus1-1];
+        output[index+two_dplus1-1] += t;
+    }
+}
+
+__global__ void
+single_update_kernel(int index, int* output, int value){
+    output[index] = value;
+}
+
+
+void print_array2(int* array, int N) {
+    printf("[");
+    for(int i = 0; i < N; i++) {
+        printf("%d, ", array[i]);
+    }
+    printf("]\n");
+}
+
 // exclusive_scan --
 //
 // Implementation of an exclusive scan on global memory array `input`,
@@ -54,8 +106,24 @@ void exclusive_scan(int* input, int N, int* result)
     // to CUDA kernel functions (that you must write) to implement the
     // scan.
 
+    // round up N
+    const int blocks = (N + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    for (int two_d = 1; two_d <= N/2; two_d *= 2) {
+        int two_dplus1 = 2*two_d;
+        upsweep_kernel<<<blocks, THREADS_PER_BLOCK>>>(N, two_d, two_dplus1, result);
+    }
+    single_update_kernel<<<1,1>>>(N-1, result, 0);
 
+    // int* awef = new int[N];
+    // cudaMemcpy(awef, result, N * sizeof(int), cudaMemcpyDeviceToHost);
+    // print_array2(awef, N);
+
+    for (int two_d = N/2; two_d >= 1; two_d /= 2) {
+        int two_dplus1 = 2*two_d;
+        downsweep_kernel<<<blocks, THREADS_PER_BLOCK>>>(N, two_d, two_dplus1, result);
+    }
 }
+
 
 
 //
@@ -140,7 +208,21 @@ double cudaScanThrust(int* inarray, int* end, int* resultarray) {
     return overallDuration; 
 }
 
+__global__ void
+mark_repeats_kernel(int N, int* input, int* output) {
+    int index = blockIdx.x*blockDim.x+threadIdx.x;
+    if (index+1 < N) {
+        output[index] = input[index] == input[index+1] ? 1 : 0;
+    }
+}
 
+__global__ void
+move_to_indices_kernel(int N, int* flags, int* indices, int* output) {
+    int index = blockIdx.x*blockDim.x+threadIdx.x;
+    if (index+1 < N && flags[index]) {
+        output[indices[index]] = index;
+    }
+}
 // find_repeats --
 //
 // Given an array of integers `device_input`, returns an array of all
@@ -160,6 +242,18 @@ int find_repeats(int* device_input, int length, int* device_output) {
     // exclusive_scan function with them. However, your implementation
     // must ensure that the results of find_repeats are correct given
     // the actual array length.
+
+    int blocks = (length+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK;
+    int* repeat_flags;
+    cudaMalloc((void **)&repeat_flags, length * sizeof(int));
+    mark_repeats_kernel<<<blocks, THREADS_PER_BLOCK>>>(length, device_input, repeat_flags);
+    int* output_indices;
+    cudaMalloc((void **)&output_indices, length * sizeof(int));
+    cudaMemcpy(output_indices, repeat_flags, length*sizeof(int), cudaMemcpyDeviceToDevice);
+    exclusive_scan(device_input, length, output_indices);
+    move_to_indices_kernel<<<blocks, THREADS_PER_BLOCK>>>(length, repeat_flags, output_indices, device_output);
+
+    // void exclusive_scan(int* input, int N, int* result)
 
     return 0; 
 }

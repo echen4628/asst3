@@ -76,6 +76,13 @@ int cpu_find_repeats(int *start, int length, int *output) {
     return count;
 }
 
+void print_array(int* array, int N) {
+    printf("[");
+    for(int i = 0; i < N; i++) {
+        printf("%d, ", array[i]);
+    }
+    printf("]\n");
+}
 
 int main(int argc, char** argv) {
   
@@ -165,7 +172,12 @@ int main(int argc, char** argv) {
         } else {    
             printf("Student GPU time: %.3f ms\n", 1000.f * cudaTime);
         } 
-
+        // f("inarray: ");
+        // print_array(inarray, N);
+        // printf("checkarray: ");
+        // print_array(checkarray, N);
+        // printf("resultarray: ");
+        // print_array(resultarray, N);
         // validate results
         for (int i = 0; i < N; i++) {
             if (checkarray[i] != resultarray[i]) {
@@ -180,7 +192,7 @@ int main(int argc, char** argv) {
 	
     } else if (test.compare("find_repeats") == 0) { // Test find_repeats
         
-        // run CUDA implementation
+        // runprint CUDA implementation
         int cu_size;
         for (int i=0; i<3; i++) {
             cudaTime = std::min(cudaTime, cudaFindRepeats(inarray, N, resultarray, &cu_size));
