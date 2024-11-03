@@ -246,15 +246,25 @@ int find_repeats(int* device_input, int length, int* device_output) {
     int blocks = (length+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK;
     int* repeat_flags;
     cudaMalloc((void **)&repeat_flags, length * sizeof(int));
+
+
     mark_repeats_kernel<<<blocks, THREADS_PER_BLOCK>>>(length, device_input, repeat_flags);
+    int* awef = new int[length];
+    printf("[repeat_flags]");
+    cudaMemcpy(awef, repeat_flags, length * sizeof(int), cudaMemcpyDeviceToHost);
+    print_array2(awef, length);
+
     int* output_indices;
     cudaMalloc((void **)&output_indices, length * sizeof(int));
     cudaMemcpy(output_indices, repeat_flags, length*sizeof(int), cudaMemcpyDeviceToDevice);
     exclusive_scan(device_input, length, output_indices);
+    printf("[ouput_indices]");
+    cudaMemcpy(awef, output_indices, length * sizeof(int), cudaMemcpyDeviceToHost);
+    print_array2(awef, length);
     move_to_indices_kernel<<<blocks, THREADS_PER_BLOCK>>>(length, repeat_flags, output_indices, device_output);
-
-    // void exclusive_scan(int* input, int N, int* result)
-
+    printf("[device_output]");
+    cudaMemcpy(awef, device_output, length * sizeof(int), cudaMemcpyDeviceToHost);
+    print_array2(awef, length);
     return 0; 
 }
 
