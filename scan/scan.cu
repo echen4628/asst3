@@ -37,13 +37,14 @@ upsweep_kernel(int N, int two_d, int two_dplus1, int* output) {
     // block, and given the block we are in (in this example only a 1D
     // calculation is needed so the code only looks at the .x terms of
     // blockDim and threadIdx.
-    int index = (blockIdx.x * blockDim.x + threadIdx.x)*two_dplus1;
+    long long index = ((long long) blockIdx.x * (long long) blockDim.x + (long long) threadIdx.x)*(long long) two_dplus1;
+    // if (index == N-1){
+    //     printf("last num %d\n", output[index]);
+    // }
 
-
-    // this check is necessary to make the code work for values of N
-    // that are not a multiple of the thread block size (blockDim.x)
     if (index < N)
-        output[index+two_dplus1-1] += output[index+two_d-1];
+        output[(long long) index+two_dplus1-1] += output[(long long) index+two_d-1];
+
 }
 
 __global__ void
@@ -53,15 +54,15 @@ downsweep_kernel(int N, int two_d, int two_dplus1, int* output) {
     // block, and given the block we are in (in this example only a 1D
     // calculation is needed so the code only looks at the .x terms of
     // blockDim and threadIdx.
-    int index = (blockIdx.x * blockDim.x + threadIdx.x)*two_dplus1;
+    long long index = ((long long) blockIdx.x * (long long) blockDim.x + (long long) threadIdx.x)* (long long) two_dplus1;
 
 
     // this check is necessary to make the code work for values of N
     // that are not a multiple of the thread block size (blockDim.x)
     if (index < N) {
-        int t = output[index+two_d-1];
-        output[index+two_d-1] = output[index+two_dplus1-1];
-        output[index+two_dplus1-1] += t;
+        int t = output[(long long) index+two_d-1];
+        output[(long long) index+two_d-1] = output[(long long) index+two_dplus1-1];
+        output[(long long) index+two_dplus1-1] += t;
     }
 }
 
@@ -107,21 +108,30 @@ void exclusive_scan(int* input, int N, int* result)
     // scan.
 
     // round up N
-    const int blocks = (N + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
-    for (int two_d = 1; two_d <= N/2; two_d *= 2) {
+    // int* awef = new int[10000];
+    // cudaMemcpy(awef, result, 10000 * sizeof(int), cudaMemcpyDeviceToHost);
+    // print_array2(awef,10000);
+    int rounded_N = nextPow2(N);
+    // printf("rounded_N: %d\n", nextPow2(N));
+    // cudaMemset(result+N, 0, (rounded_N-N)*sizeof(int));
+    const int blocks = (rounded_N + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    // printf("block numbers: %d\n", blocks);
+    for (int two_d = 1; two_d <= rounded_N/2; two_d *= 2) {
         int two_dplus1 = 2*two_d;
-        upsweep_kernel<<<blocks, THREADS_PER_BLOCK>>>(N, two_d, two_dplus1, result);
+        upsweep_kernel<<<blocks, THREADS_PER_BLOCK>>>(rounded_N, two_d, two_dplus1, result);
     }
-    single_update_kernel<<<1,1>>>(N-1, result, 0);
+    single_update_kernel<<<1,1>>>(rounded_N-1, result, 0);
 
-    // int* awef = new int[N];
-    // cudaMemcpy(awef, result, N * sizeof(int), cudaMemcpyDeviceToHost);
-    // print_array2(awef, N);
+    // cudaMemcpy(awef, result, rounded_N * sizeof(int), cudaMemcpyDeviceToHost);
+    // print_array2(awef,rounded_N);
 
-    for (int two_d = N/2; two_d >= 1; two_d /= 2) {
+    for (int two_d = rounded_N/2; two_d >= 1; two_d /= 2) {
         int two_dplus1 = 2*two_d;
-        downsweep_kernel<<<blocks, THREADS_PER_BLOCK>>>(N, two_d, two_dplus1, result);
+        downsweep_kernel<<<blocks, THREADS_PER_BLOCK>>>(rounded_N, two_d, two_dplus1, result);
     }
+    // cudaMemcpy(awef, result, 10000 * sizeof(int), cudaMemcpyDeviceToHost);
+    // printf("result");
+    // print_array2(awef, 10000);
 }
 
 
@@ -210,16 +220,17 @@ double cudaScanThrust(int* inarray, int* end, int* resultarray) {
 
 __global__ void
 mark_repeats_kernel(int N, int* input, int* output) {
-    int index = blockIdx.x*blockDim.x+threadIdx.x;
+    int index = (long long) blockIdx.x* (long long) blockDim.x+ (long long) threadIdx.x;
     if (index+1 < N) {
         output[index] = input[index] == input[index+1] ? 1 : 0;
     }
 }
 
 __global__ void
-move_to_indices_kernel(int N, int* flags, int* indices, int* output) {
-    int index = blockIdx.x*blockDim.x+threadIdx.x;
+move_to_indices_kernel(int N, int* flags, int* indices, int* output, int* d_sharedInteger) {
+    int index = (long long) blockIdx.x* (long long) blockDim.x+(long long) threadIdx.x;
     if (index+1 < N && flags[index]) {
+        atomicAdd(d_sharedInteger, 1);
         output[indices[index]] = index;
     }
 }
@@ -243,29 +254,48 @@ int find_repeats(int* device_input, int length, int* device_output) {
     // must ensure that the results of find_repeats are correct given
     // the actual array length.
 
-    int blocks = (length+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK;
+    int rounded_length = nextPow2(length);
+
+    int blocks = (rounded_length+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK;
     int* repeat_flags;
-    cudaMalloc((void **)&repeat_flags, length * sizeof(int));
+    cudaMalloc((void **)&repeat_flags, rounded_length * sizeof(int));
 
 
-    mark_repeats_kernel<<<blocks, THREADS_PER_BLOCK>>>(length, device_input, repeat_flags);
-    int* awef = new int[length];
-    printf("[repeat_flags]");
-    cudaMemcpy(awef, repeat_flags, length * sizeof(int), cudaMemcpyDeviceToHost);
-    print_array2(awef, length);
+    mark_repeats_kernel<<<blocks, THREADS_PER_BLOCK>>>(rounded_length, device_input, repeat_flags);
+    // int* awef = new int[length];
+    // printf("[repeat_flags]");
+    // cudaMemcpy(awef, repeat_flags, length * sizeof(int), cudaMemcpyDeviceToHost);
+    // print_array2(awef, length);
 
     int* output_indices;
-    cudaMalloc((void **)&output_indices, length * sizeof(int));
-    cudaMemcpy(output_indices, repeat_flags, length*sizeof(int), cudaMemcpyDeviceToDevice);
-    exclusive_scan(device_input, length, output_indices);
-    printf("[ouput_indices]");
-    cudaMemcpy(awef, output_indices, length * sizeof(int), cudaMemcpyDeviceToHost);
-    print_array2(awef, length);
-    move_to_indices_kernel<<<blocks, THREADS_PER_BLOCK>>>(length, repeat_flags, output_indices, device_output);
-    printf("[device_output]");
-    cudaMemcpy(awef, device_output, length * sizeof(int), cudaMemcpyDeviceToHost);
-    print_array2(awef, length);
-    return 0; 
+    cudaMalloc((void **)&output_indices, rounded_length * sizeof(int));
+    cudaMemcpy(output_indices, repeat_flags, rounded_length*sizeof(int), cudaMemcpyDeviceToDevice);
+    exclusive_scan(device_input, rounded_length, output_indices);
+    // printf("[ouput_indices]");
+    // cudaMemcpy(awef, output_indices, length * sizeof(int), cudaMemcpyDeviceToHost);
+    // print_array2(awef, length);
+
+    // Host variable to store the result
+    int h_sharedInteger = 0;
+
+    // Device variable
+    int *d_sharedInteger;
+    cudaMalloc(&d_sharedInteger, sizeof(int));
+    cudaMemcpy(d_sharedInteger, &h_sharedInteger, sizeof(int), cudaMemcpyHostToDevice);
+
+
+    move_to_indices_kernel<<<blocks, THREADS_PER_BLOCK>>>(length, repeat_flags, output_indices, device_output, d_sharedInteger);
+     // Copy the result back to the host
+    cudaMemcpy(&h_sharedInteger, d_sharedInteger, sizeof(int), cudaMemcpyDeviceToHost);
+    cudaFree(d_sharedInteger);
+
+    // printf("Shared Integer after atomic adds: %d\n", h_sharedInteger);
+
+    
+    // printf("[device_output]");
+    // cudaMemcpy(awef, device_output, length * sizeof(int), cudaMemcpyDeviceToHost);
+    // print_array2(awef, length);
+    return h_sharedInteger; 
 }
 
 

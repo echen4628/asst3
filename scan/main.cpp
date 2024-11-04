@@ -191,10 +191,10 @@ int main(int argc, char** argv) {
         printf("Scan outputs are correct!\n");
 	
     } else if (test.compare("find_repeats") == 0) { // Test find_repeats
-        f("inarray: ");
-        print_array(inarray, N);
-        printf("checkarray: ");
-        print_array(checkarray, N);
+        // printf("inarray: ");
+        // print_array(inarray, N);
+        // printf("checkarray: ");
+        // print_array(checkarray, N);
 
         // runprint CUDA implementation
         int cu_size;
@@ -202,8 +202,8 @@ int main(int argc, char** argv) {
             cudaTime = std::min(cudaTime, cudaFindRepeats(inarray, N, resultarray, &cu_size));
         }
 
-        printf("resultarray: ");
-        print_array(resultarray, N);
+        // printf("resultarray: ");
+        // print_array(resultarray, N);
 
         // run CPU implementation to check correctness 
         int serial_size = cpu_find_repeats(inarray, N, checkarray);
