@@ -575,6 +575,8 @@ CudaRenderer::setup() {
 
     cudaMemcpyToSymbol(cuConstColorRamp, lookupTable, sizeof(float) * 3 * COLOR_MAP_SIZE);
 
+    
+
 }
 
 // allocOutputImage --
@@ -633,13 +635,85 @@ CudaRenderer::advanceAnimation() {
     cudaDeviceSynchronize();
 }
 
+__global__ void kernelRenderPixels() {
+    int row = blockIdx.x*blockDim.x+threadIdx.x;
+    int col = blockIdx.y*blockDim.y+threadIdx.y;
+
+    for (int index=0; index<cuConstRendererParams.numCircles; index++){
+        int index3 = 3 * index;
+
+        // read position and radius
+        float3 p = *(float3*)(&cuConstRendererParams.position[index3]);
+        float  rad = cuConstRendererParams.radius[index];
+
+        // compute the bounding box of the circle. The bound is in integer
+        // screen coordinates, so it's clamped to the edges of the screen.
+        short imageWidth = cuConstRendererParams.imageWidth;
+        short imageHeight = cuConstRendererParams.imageHeight;
+        // float circleCenterX = imageWidth*(p.x);
+        // float circleCenterY = imageHeight*(p.y);
+        // if ((row-circleCenterY)*(row-circleCenterY)+(col-circleCenterX)*(col-circleCenterX) > rad){
+        //     continue;
+        // }
+
+
+
+        short minX = static_cast<short>(imageWidth * (p.x - rad));
+        short maxX = static_cast<short>(imageWidth * (p.x + rad)) + 1;
+        short minY = static_cast<short>(imageHeight * (p.y - rad));
+        short maxY = static_cast<short>(imageHeight * (p.y + rad)) + 1;
+        if (!(minX <= col <maxX) || !(minY <= row < maxY)){
+            continue;
+        }
+        // printf("Row: %d, Col %d, circleCenterX: %f, circleCenterY: %f\n", row, col, circleCenterX, circleCenterY);
+        // printf("should be painting\n");
+        // // a bunch of clamps.  Is there a CUDA built-in for this?
+        // short screenMinX = (minX > 0) ? ((minX < imageWidth) ? minX : imageWidth) : 0;
+        // short screenMaxX = (maxX > 0) ? ((maxX < imageWidth) ? maxX : imageWidth) : 0;
+        // short screenMinY = (minY > 0) ? ((minY < imageHeight) ? minY : imageHeight) : 0;
+        // short screenMaxY = (maxY > 0) ? ((maxY < imageHeight) ? maxY : imageHeight) : 0;
+
+        float invWidth = 1.f / imageWidth;
+        float invHeight = 1.f / imageHeight;
+
+        // for all pixels in the bonding box
+        for (int pixelY=row; pixelY<row+1; pixelY++) {
+            float4* imgPtr = (float4*)(&cuConstRendererParams.imageData[4 * (pixelY * imageWidth + col)]);
+            for (int pixelX=col; pixelX<col+1; pixelX++) {
+                float2 pixelCenterNorm = make_float2(invWidth * (static_cast<float>(pixelX) + 0.5f),
+                                                    invHeight * (static_cast<float>(pixelY) + 0.5f));
+                shadePixel(index, pixelCenterNorm, p, imgPtr);
+                imgPtr++;
+            }
+        }
+    }
+
+}
 void
 CudaRenderer::render() {
 
     // 256 threads per block is a healthy number
-    dim3 blockDim(256, 1);
-    dim3 gridDim((numCircles + blockDim.x - 1) / blockDim.x);
+    // dim3 blockDim(256, 1);
+    // dim3 gridDim((numCircles + blockDim.x - 1) / blockDim.x);
 
-    kernelRenderCircles<<<gridDim, blockDim>>>();
+    // kernelRenderCircles<<<gridDim, blockDim>>>();
+
+    dim3 blockDim(16, 16);
+    printf("image height is %d\n", image->height);
+    dim3 gridDim((image->height + blockDim.x - 1) / blockDim.x, 
+                 (image->width + blockDim.y - 1) / blockDim.y);
+    kernelRenderPixels<<<gridDim, blockDim>>>();
+
+    // first we need a function that can create a list that tells us what pixels needs to be colored
+    // daastructure, maybe can be an array of vectors, each vector can have arbitrary length
+
+
+    // then we will launch a kernel that can look into this list and then go in that order to do the coloring (each thread)
+
+    // then we can have on thread that is in charge of coloring several roles of data to reduce the number of threads created
+
     cudaDeviceSynchronize();
 }
+
+
+
