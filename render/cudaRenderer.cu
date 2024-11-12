@@ -20,14 +20,17 @@
 #include <thrust/sort.h>
 #include <thrust/execution_policy.h>
 
+#define SCAN_BLOCK_DIM   1024  // needed by sharedMemExclusiveScan implementation
+#include "exclusiveScan.cu_inl"
+
 
 ////////////////////////////////////////////////////////////////////////////////////////
 // Putting all the cuda kernels here
 ///////////////////////////////////////////////////////////////////////////////////////
 // #define PATCH_X 256;
 // #define PATCH_Y 256;
-#define PATCH_X 10;
-#define PATCH_Y 10;
+#define PATCH_X 256;
+#define PATCH_Y 256;
 
 struct GlobalConstants {
 
@@ -655,202 +658,6 @@ CudaRenderer::advanceAnimation() {
     cudaDeviceSynchronize();
 }
 
-__global__ void kernelRenderPixels(int patch_x, int patch_y,
-                                   int* deviceCircleCountsSums, 
-                                   int* deviceCircleCountsSumsEnd, 
-                                   int* deviceCirclesAcrossPatches) {
-    // int row = blockIdx.x*blockDim.x+threadIdx.x;
-    // int col = blockIdx.y*blockDim.y+threadIdx.y;
-
-
-    // short screenMinX = max(0, min(minX, imageWidth));
-    short imageWidth = cuConstRendererParams.imageWidth;
-    short imageHeight = cuConstRendererParams.imageHeight;
-
-    int patch_idx_x = (blockIdx.x*blockDim.x+threadIdx.x);
-    if (patch_idx_x >= cuConstRendererParams.num_patches_x){
-        return;
-    }
-    int patch_idx_y = (blockIdx.y*blockDim.y+threadIdx.y);
-    if (patch_idx_y >= cuConstRendererParams.num_patches_y){
-        return;
-    }
-    int patch_idx = patch_idx_y*cuConstRendererParams.num_patches_x+patch_idx_x;
-    // if (patch_idx >= cuConstRendererParams.num_patches_x*cuConstRendererParams.num_patches_y){
-    //     return;
-    // }
-    printf("I'm on pat_x: %d, pat_y: %d, patch %d, deviceCircleCountsSums: %d, deviceCircleCountsSumsEnd: %d\n", patch_idx_x, patch_idx_y, patch_idx, deviceCircleCountsSums[patch_idx], deviceCircleCountsSumsEnd[patch_idx]);
-    if (deviceCircleCountsSums[patch_idx] == deviceCircleCountsSumsEnd[patch_idx]){
-        printf("nothinig to draw\n");
-        return;
-    }
-
-    float min_row = max(0, min((blockIdx.x*blockDim.x+threadIdx.x)*patch_y, imageHeight));
-    float min_col = max(0, min((blockIdx.y*blockDim.y+threadIdx.y)*patch_x, imageWidth));
-
-    float max_row = max(0, min((blockIdx.x*blockDim.x+threadIdx.x+1)*patch_y, imageHeight));
-    float max_col = max(0, min((blockIdx.y*blockDim.y+threadIdx.y+1)*patch_x, imageWidth));
-
-    // printf("test %d\n", deviceCirclesAcrossPatches[1]);
-
-    for (int index=deviceCircleCountsSums[patch_idx]; index < deviceCircleCountsSumsEnd[patch_idx]; index++){
-        // printf("hi %d\n", index);
-        // printf("bye %d\n", deviceCirclesAcrossPatches[index]);
-        int circle_index = deviceCirclesAcrossPatches[index];
-        printf("[patch %d]: I want to draw circle %d\n", patch_idx, circle_index);
-        int index3 = 3 * circle_index;
-
-        // read position and radius
-        float3 p = *(float3*)(&cuConstRendererParams.position[index3]);
-        // float  rad = cuConstRendererParams.radius[circle_index];
-        
-
-
-        // compute the bounding box of the circle. The bound is in integer
-        // screen coordinates, so it's clamped to the edges of the screen.
-
-        // float circleCenterX = imageWidth*(p.x);
-        // float circleCenterY = imageHeight*(p.y);
-        // if ((row-circleCenterY)*(row-circleCenterY)+(col-circleCenterX)*(col-circleCenterX) > rad){
-        //     continue;
-        // }
-
-        // printf("Row: %d, Col %d, circleCenterX: %f, circleCenterY: %f\n", min_row, min_col, circleCenterX, circleCenterY);
-
-        // if (0 == circleInBoxConservative(p.x, p.y, rad, min_col/imageWidth, max_col/imageWidth,
-        //                         max_row/imageHeight, min_row/imageHeight)){
-        //                             continue;
-        //                         }
-
-
-        // short minX = static_cast<short>(imageWidth * (p.x - rad));
-        // short maxX = static_cast<short>(imageWidth * (p.x + rad)) + 1;
-        // short minY = static_cast<short>(imageHeight * (p.y - rad));
-        // short maxY = static_cast<short>(imageHeight * (p.y + rad)) + 1;
-        // if (!(minX <= col <maxX) || !(minY <= row < maxY)){
-        //     continue;
-        // }
-        // printf("Row: %d, Col %d, circleCenterX: %f, circleCenterY: %f\n", min_row, min_col, circleCenterX, circleCenterY);
-        // printf("should be painting\n");
-        // // a bunch of clamps.  Is there a CUDA built-in for this?
-        // short screenMinX = (minX > 0) ? ((minX < imageWidth) ? minX : imageWidth) : 0;
-        // short screenMaxX = (maxX > 0) ? ((maxX < imageWidth) ? maxX : imageWidth) : 0;
-        // short screenMinY = (minY > 0) ? ((minY < imageHeight) ? minY : imageHeight) : 0;
-        // short screenMaxY = (maxY > 0) ? ((maxY < imageHeight) ? maxY : imageHeight) : 0;
-
-        float invWidth = 1.f / imageWidth;
-        float invHeight = 1.f / imageHeight;
-
-        // for all pixels in the bonding box
-        for (int pixelY=min_row; pixelY<max_row; pixelY++) {
-            float4* imgPtr = (float4*)(&cuConstRendererParams.imageData[4 * (pixelY * imageWidth + (int) min_col)]);
-            for (int pixelX=min_col; pixelX<max_col; pixelX++) {
-                float2 pixelCenterNorm = make_float2(invWidth * (static_cast<float>(pixelX) + 0.5f),
-                                                    invHeight * (static_cast<float>(pixelY) + 0.5f));
-                shadePixel(circle_index, pixelCenterNorm, p, imgPtr);
-                imgPtr++;
-            }
-        }
-    }
-}
-
-__global__ void kernelCountCounts (int* deviceCircleCountsPerPatch) {
-
-    int index = blockIdx.x*blockDim.x+threadIdx.x;
-    if (index >= cuConstRendererParams.numCircles) {
-        return;
-    }
-
-    int index3 = 3 * index;
-
-    // read position and radius
-    float3 p = *(float3*)(&cuConstRendererParams.position[index3]);
-    float  rad = cuConstRendererParams.radius[index];
-
-    // compute the bounding box of the circle. The bound is in integer
-    // screen coordinates, so it's clamped to the edges of the screen.
-    short imageWidth = cuConstRendererParams.imageWidth;
-    short imageHeight = cuConstRendererParams.imageHeight;
-    short minX = static_cast<short>(imageWidth * (p.x - rad));
-    short maxX = static_cast<short>(imageWidth * (p.x + rad)) + 1;
-    short minY = static_cast<short>(imageHeight * (p.y - rad));
-    short maxY = static_cast<short>(imageHeight * (p.y + rad)) + 1;
-
-    // a bunch of clamps.  Is there a CUDA built-in for this?
-    short screenMinX = (minX > 0) ? ((minX < imageWidth) ? minX : imageWidth) : 0;
-    short screenMaxX = (maxX > 0) ? ((maxX < imageWidth) ? maxX : imageWidth) : 0;
-    short screenMinY = (minY > 0) ? ((minY < imageHeight) ? minY : imageHeight) : 0;
-    short screenMaxY = (maxY > 0) ? ((maxY < imageHeight) ? maxY : imageHeight) : 0;
-
-    // float invWidth = 1.f / imageWidth;
-    // float invHeight = 1.f / imageHeight;
-
-    // for all pixels in the bonding box
-    for (int pixelY=screenMinY; pixelY<screenMaxY; pixelY+=cuConstRendererParams.patch_y) {
-        // float4* imgPtr = (float4*)(&cuConstRendererParams.imageData[4 * (pixelY * imageWidth + screenMinX)]);
-        for (int pixelX=screenMinX; pixelX<screenMaxX; pixelX+=cuConstRendererParams.patch_x) {
-            // float2 pixelCenterNorm = make_float2(invWidth * (static_cast<float>(pixelX) + 0.5f),
-            //                                      invHeight * (static_cast<float>(pixelY) + 0.5f));
-            // shadePixel(index, pixelCenterNorm, p, imgPtr);
-            // imgPtr++;
-            int currentPatchY = pixelY/cuConstRendererParams.patch_y;
-            int currentPatchX = pixelX/cuConstRendererParams.patch_x;
-            // printf("pixelY: %d, pixelX: %d should +1\n", currentPatchY, currentPatchX);
-            atomicAdd(&deviceCircleCountsPerPatch[currentPatchY*cuConstRendererParams.num_patches_x+currentPatchX], 1);
-        }
-    }
-    
-}
-
-__global__ void kernelMoveCirclesToPatches (int* deviceCircleCountsSums,
-                                            int* circlesAcrossPatches) {
-
-    int index = blockIdx.x*blockDim.x+threadIdx.x;
-    if (index >= cuConstRendererParams.numCircles) {
-        return;
-    }
-
-    int index3 = 3 * index;
-
-    // read position and radius
-    float3 p = *(float3*)(&cuConstRendererParams.position[index3]);
-    float  rad = cuConstRendererParams.radius[index];
-
-    // compute the bounding box of the circle. The bound is in integer
-    // screen coordinates, so it's clamped to the edges of the screen.
-    short imageWidth = cuConstRendererParams.imageWidth;
-    short imageHeight = cuConstRendererParams.imageHeight;
-    short minX = static_cast<short>(imageWidth * (p.x - rad));
-    short maxX = static_cast<short>(imageWidth * (p.x + rad)) + 1;
-    short minY = static_cast<short>(imageHeight * (p.y - rad));
-    short maxY = static_cast<short>(imageHeight * (p.y + rad)) + 1;
-
-    // a bunch of clamps.  Is there a CUDA built-in for this?
-    short screenMinX = (minX > 0) ? ((minX < imageWidth) ? minX : imageWidth) : 0;
-    short screenMaxX = (maxX > 0) ? ((maxX < imageWidth) ? maxX : imageWidth) : 0;
-    short screenMinY = (minY > 0) ? ((minY < imageHeight) ? minY : imageHeight) : 0;
-    short screenMaxY = (maxY > 0) ? ((maxY < imageHeight) ? maxY : imageHeight) : 0;
-
-    // float invWidth = 1.f / imageWidth;
-    // float invHeight = 1.f / imageHeight;
-
-    // for all pixels in the bonding box
-    for (int pixelY=screenMinY; pixelY<screenMaxY; pixelY+=cuConstRendererParams.patch_y) {
-        // float4* imgPtr = (float4*)(&cuConstRendererParams.imageData[4 * (pixelY * imageWidth + screenMinX)]);
-        for (int pixelX=screenMinX; pixelX<screenMaxX; pixelX+=cuConstRendererParams.patch_x) {
-            // float2 pixelCenterNorm = make_float2(invWidth * (static_cast<float>(pixelX) + 0.5f),
-            //                                      invHeight * (static_cast<float>(pixelY) + 0.5f));
-            // shadePixel(index, pixelCenterNorm, p, imgPtr);
-            // imgPtr++;
-            int currentPatchY = pixelY/cuConstRendererParams.patch_y;
-            int currentPatchX = pixelX/cuConstRendererParams.patch_x;
-            // printf("pixelY: %d, pixelX: %d should +1\n", currentPatchY, currentPatchX);
-            int oldIdx = atomicAdd(&deviceCircleCountsSums[currentPatchY*cuConstRendererParams.num_patches_x+currentPatchX], 1);
-            atomicAdd(&circlesAcrossPatches[oldIdx], index);
-        }
-    }
-    
-}
 
 void print_array2(int* array, int N) {
     printf("[");
@@ -860,110 +667,228 @@ void print_array2(int* array, int N) {
     printf("]\n");
 }
 
+// __global__ void kerneRenderPatch(int iteration) {
+//     // allocate 1024 circles
+
+//     // start from iteration and check overlap
+
+// }
+
+__global__ void kernelRenderPatch(int patch_x, int patch_y, int* d_reducedOut) {
+    // short imageWidth = cuConstRendererParams.imageWidth;
+    // short imageHeight = cuConstRendererParams.imageHeight;
+
+    // float min_row = min((blockIdx.x*blockDim.x+threadIdx.x)*patch_y, imageHeight);
+    // float min_col = min((blockIdx.y*blockDim.y+threadIdx.y)*patch_x, imageWidth);
+
+    // float max_row = min((blockIdx.x*blockDim.x+threadIdx.x+1)*patch_y, imageHeight);
+    // float max_col = min((blockIdx.y*blockDim.y+threadIdx.y+1)*patch_x, imageWidth);
+
+    int patchXIndex = blockIdx.x*blockDim.x+threadIdx.x;
+    int patchYIndex = blockIdx.y*blockDim.y+threadIdx.y;
+    // int *d_in_updated = d_in + (patchYIndex*cuConstRendererParams.num_patches_x+patchXIndex) * SCAN_BLOCK_DIM;
+
+    int minX = min(patchXIndex*cuConstRendererParams.patch_x, cuConstRendererParams.imageWidth);
+    int minY = min(patchXIndex*cuConstRendererParams.patch_y, cuConstRendererParams.imageHeight);
+    int maxX = min((patchXIndex+1)*cuConstRendererParams.patch_x, cuConstRendererParams.imageWidth);
+    int maxY = min((patchXIndex+1)*cuConstRendererParams.patch_y, cuConstRendererParams.imageHeight);
+
+    int patchIndex = patchYIndex*cuConstRendererParams.num_patches_x+patchXIndex;
+
+    int d_reducedOut_index = 0;
+    while ((d_reducedOut_index < SCAN_BLOCK_DIM) && d_reducedOut[patchIndex*SCAN_BLOCK_DIM+d_reducedOut_index] != -1){
+        int index = d_reducedOut[d_reducedOut_index];
+        int index3 = 3 * index;
+
+        // read position and radius
+        float3 p = *(float3*)(&cuConstRendererParams.position[index3]);
+        // float  rad = cuConstRendererParams.radius[index];
+        
+        float invWidth = 1.f / cuConstRendererParams.imageWidth;
+        float invHeight = 1.f / cuConstRendererParams.imageHeight;
+
+        // for all pixels in the bonding box
+        for (int pixelY=minY; pixelY<maxY; pixelY++) {
+            float4* imgPtr = (float4*)(&cuConstRendererParams.imageData[4 * (pixelY * cuConstRendererParams.imageWidth + (int) minX)]);
+            for (int pixelX=minX; pixelX<minY; pixelX++) {
+                float2 pixelCenterNorm = make_float2(invWidth * (static_cast<float>(pixelX) + 0.5f),
+                                                    invHeight * (static_cast<float>(pixelY) + 0.5f));
+                shadePixel(index, pixelCenterNorm, p, imgPtr);
+                imgPtr++;
+            }
+        }
+    }
+}
+
+
+__global__ void markOverlapsKernel(int *d_in) {
+    int patchXIndex = blockIdx.x;
+    int patchYIndex = blockIdx.y;
+    int circleIndex = threadIdx.x;
+    // int *d_in_updated = d_in + (patchYIndex*cuConstRendererParams.num_patches_x+patchXIndex) * SCAN_BLOCK_DIM;
+    if (circleIndex >= cuConstRendererParams.numCircles) {
+        return;
+    }
+    int minX = min(patchXIndex*cuConstRendererParams.patch_x, cuConstRendererParams.imageWidth);
+    int minY = min(patchXIndex*cuConstRendererParams.patch_y, cuConstRendererParams.imageHeight);
+    int maxX = min((patchXIndex+1)*cuConstRendererParams.patch_x, cuConstRendererParams.imageWidth);
+    int maxY = min((patchXIndex+1)*cuConstRendererParams.patch_y, cuConstRendererParams.imageHeight);
+
+    int circleIndex3 = 3 * circleIndex;
+
+    // read position and radius
+    float3 p = *(float3*)(&cuConstRendererParams.position[circleIndex3]);
+    float  rad = cuConstRendererParams.radius[circleIndex];
+// d_in_updated[circleIndex]
+    d_in[(patchYIndex*cuConstRendererParams.num_patches_x+patchXIndex)*SCAN_BLOCK_DIM+circleIndex] = circleInBox(p.x, p.y, rad, minX/cuConstRendererParams.imageWidth, maxX/cuConstRendererParams.imageWidth,
+                maxY/cuConstRendererParams.imageHeight, minY/cuConstRendererParams.imageHeight);
+}
+
+__global__ void exclusiveScanKernel(int *d_in, int *d_out) {
+    int arrayIndex = blockIdx.x;
+    int tid = threadIdx.x;
+
+    // Offset pointers for each array
+    int *array_in = d_in + arrayIndex * SCAN_BLOCK_DIM;
+    int *array_out = d_out + arrayIndex * SCAN_BLOCK_DIM;
+
+    // Define shared memory for the scan operation within each block
+    __shared__ uint sInput[SCAN_BLOCK_DIM];
+    __shared__ uint sOutput[SCAN_BLOCK_DIM];
+    __shared__ uint sScratch[2 * SCAN_BLOCK_DIM];
+
+    // Load input data for this array into shared memory
+    sInput[tid] = array_in[tid];
+    __syncthreads();
+
+    // Perform exclusive scan
+    sharedMemExclusiveScan(tid, sInput, sOutput, sScratch, SCAN_BLOCK_DIM);
+
+    // Write the output from shared memory back to global memory
+    array_out[tid] = sOutput[tid];
+}
+
+__global__ void extractIndicesKernel(int* d_in, int* d_out, int* d_reducedOut) {
+    int arrayIndex = blockIdx.x;
+    int circleIndex = threadIdx.x;
+
+    if (circleIndex >= cuConstRendererParams.numCircles)
+    {
+        return; 
+    }
+    if (d_in[arrayIndex*SCAN_BLOCK_DIM+circleIndex] == 1){
+        d_reducedOut[arrayIndex*SCAN_BLOCK_DIM+d_out[arrayIndex*SCAN_BLOCK_DIM+circleIndex]] = circleIndex;
+    }
+}
+
 void
 CudaRenderer::render() {
-
-    // 256 threads per block is a healthy number
-    // dim3 blockDim(256, 1);
-    // dim3 gridDim((numCircles + blockDim.x - 1) / blockDim.x);
-
-    // kernelRenderCircles<<<gridDim, blockDim>>>();
+    printf("hi\n");
 
     int patch_x = PATCH_X;
     int patch_y = PATCH_Y;
-    int num_patches_x = (image->width+patch_x-1)/patch_x;
+    printf("1\n");
+    int num_patches_x = (image->width +patch_x-1)/patch_x;
     int num_patches_y = (image->height+patch_y-1)/patch_y;
     int num_patches = num_patches_x*num_patches_y;
-    
-    printf("image->width: %d, image->height: %d\n", image->width, image->height);
-    printf("patch_x: %d, patch_y: %d\n", patch_x, patch_y);
-    printf("num_patches_x: %d, num_patches_y: %d\n", num_patches_x, num_patches_y);
-
-    int circleCountsPerPatch[num_patches+1] = { };
-    int* deviceCircleCountsPerPatch;
-    cudaMalloc(&deviceCircleCountsPerPatch, sizeof(int) * (num_patches+1));
-    cudaMemcpy(deviceCircleCountsPerPatch, circleCountsPerPatch, sizeof(int) * (num_patches+1), cudaMemcpyHostToDevice);
-
-    dim3 circlesBlockDim(256, 1);
-    dim3 circlesGridDim((numCircles+circlesBlockDim.x-1)/circlesBlockDim.x);
-
-    kernelCountCounts<<<circlesGridDim, circlesBlockDim>>>(deviceCircleCountsPerPatch);
-
-    cudaMemcpy(circleCountsPerPatch, deviceCircleCountsPerPatch, sizeof(int) * (num_patches+1), cudaMemcpyDeviceToHost);
-    printf("circleCountsPerPatch: ");
-    print_array2(circleCountsPerPatch, num_patches+1);
-    printf("num_patches_x: %d, num_patches_y: %d\n", num_patches_x, num_patches_y);
+    printf("2\n");
 
 
-    // Allocate memory for the prefix sum result on the device
-    int* deviceCircleCountsSums;
-    cudaMalloc(&deviceCircleCountsSums, sizeof(int) * (num_patches+1));
+    int h_in[num_patches*SCAN_BLOCK_DIM] = {};
+    int h_out[num_patches*SCAN_BLOCK_DIM] = {};
+    printf("3\n");
 
-    // Step 1: Wrap raw device pointers with thrust::device_ptr
-    thrust::device_ptr<int> dev_ptr_counts(deviceCircleCountsPerPatch);
-    thrust::device_ptr<int> dev_ptr_sums(deviceCircleCountsSums);
-
-    // Step 2: Perform exclusive scan
-    thrust::exclusive_scan(dev_ptr_counts, dev_ptr_counts + (num_patches+1), dev_ptr_sums);
-
-    // Optional: Copy back to host to verify the result (for debugging purposes)
-    int circleCountsSums[num_patches+1];
-    cudaMemcpy(circleCountsSums, deviceCircleCountsSums, sizeof(int) * (num_patches+1), cudaMemcpyDeviceToHost);
-    printf("circleCountsSums: ");
-    print_array2(circleCountsSums, (num_patches+1));
-
-    int* deviceCircleCountsSumsEnd;
-    cudaMalloc(&deviceCircleCountsSumsEnd, sizeof(int) * (num_patches+1));
-    cudaMemcpy(deviceCircleCountsSumsEnd, deviceCircleCountsSums, sizeof(int) * (num_patches+1), cudaMemcpyDeviceToDevice);
-
-    int* deviceCirclesAcrossPatches;
-    cudaMalloc(&deviceCirclesAcrossPatches, sizeof(int)*(circleCountsSums[num_patches]));
-    cudaMemset(deviceCirclesAcrossPatches, 0, sizeof(int)*(circleCountsSums[num_patches]));
-    kernelMoveCirclesToPatches<<<circlesGridDim, circlesBlockDim>>>(deviceCircleCountsSumsEnd, deviceCirclesAcrossPatches);
-    int circlesAcrossPatches[circleCountsSums[num_patches]];
-    cudaMemcpy(circlesAcrossPatches, deviceCirclesAcrossPatches, sizeof(int) * circleCountsSums[num_patches], cudaMemcpyDeviceToHost);
-    printf("circlesAcrossPatches: ");
-    print_array2(circlesAcrossPatches, circleCountsSums[num_patches]);
-
-    cudaMemcpy(circleCountsSums, deviceCircleCountsSums, sizeof(int) * (num_patches+1), cudaMemcpyDeviceToHost);
-    printf("circleCountsSumsStart: ");
-    print_array2(circleCountsSums, (num_patches+1));
-
-    int circleCountsSumsEnd[num_patches+1];
-    cudaMemcpy(circleCountsSumsEnd, deviceCircleCountsSumsEnd, sizeof(int) * (num_patches+1), cudaMemcpyDeviceToHost);
-    printf("circleCountsSumsEnd: ");
-    print_array2(circleCountsSumsEnd, (num_patches+1));
+    // Initialize input arrays (e.g., all elements as 1 for simplicity)
+    // for (int i = 0; i < num_patches; i++) {
+    //     for (int j = 0; j < SCAN_BLOCK_DIM; j++) {
+    //         h_in[i*SCAN_BLOCK_DIM+j] = 1;  // You can use different values as needed
+    //     }
+    // }
 
 
-    thrust::device_ptr<int> dev_circles_across_patches(deviceCirclesAcrossPatches);
+    printf("ok so far\n");
 
-    for (int i=0; i<num_patches; i++){
-        thrust::sort(thrust::device, dev_circles_across_patches+circleCountsSums[i], dev_circles_across_patches+circleCountsSumsEnd[i]);
+    // Allocate device memory
+    int *d_in, *d_out;
+    int size = num_patches*SCAN_BLOCK_DIM*sizeof(int);
+    cudaMalloc(&d_in, size);
+    cudaMalloc(&d_out, size);
+    cudaMemcpy(d_in, h_in, size, cudaMemcpyHostToDevice);
+    printf("seems like allocated memory fine\n");
+
+    dim3 gridDim(num_patches_x, num_patches_y);
+    dim3 blockDim(SCAN_BLOCK_DIM, 1);
+    markOverlapsKernel<<<gridDim, blockDim>>>(d_in);
+    printf("marking circles works\n");
+    cudaMemcpy(h_out, d_in, size, cudaMemcpyDeviceToHost);
+    for (int i = 0; i < num_patches; i++) {
+        printf("marking overlap output for array %d:\n", i);
+        for (int j = 0; j < SCAN_BLOCK_DIM; j++) {
+            printf("%d ", h_out[i*SCAN_BLOCK_DIM+j]);
+        }
+        printf("\n");
     }
-    cudaMemcpy(circlesAcrossPatches, deviceCirclesAcrossPatches, sizeof(int) * circleCountsSums[num_patches], cudaMemcpyDeviceToHost);
-    printf("circlesAcrossPatchesSorted: ");
-    print_array2(circlesAcrossPatches, circleCountsSums[num_patches]);
 
-    dim3 blockDim(16, 16);
+    // Launch kernel with ARRAY_COUNT blocks and BLOCKSIZE threads per block
+    exclusiveScanKernel<<<num_patches, SCAN_BLOCK_DIM>>>(d_in, d_out);
+    printf("exclusive scan works\n");
 
-    dim3 gridDim((image->height/patch_x + blockDim.x - 1) / blockDim.x, 
-                 (image->width/patch_y + blockDim.y - 1) / blockDim.y);
-    kernelRenderPixels<<<gridDim, blockDim>>>(patch_x, patch_y, deviceCircleCountsSums, deviceCircleCountsSumsEnd, deviceCirclesAcrossPatches);
+    cudaMemcpy(h_out, d_in, size, cudaMemcpyDeviceToHost);
+    for (int i = 0; i < num_patches; i++) {
+        printf("exclusive output for array %d:\n", i);
+        for (int j = 0; j < SCAN_BLOCK_DIM; j++) {
+            printf("%d ", h_out[i*SCAN_BLOCK_DIM+j]);
+        }
+        printf("\n");
+    }
+
+    int *d_reducedOut;
+    cudaMalloc(&d_reducedOut, size);
+    cudaMemset(d_reducedOut, -1, size);
+    extractIndicesKernel<<<num_patches, SCAN_BLOCK_DIM>>>(d_in, d_out, d_reducedOut);
+
+    cudaMemcpy(h_out, d_reducedOut, size, cudaMemcpyDeviceToHost);
+    for (int i = 0; i < num_patches; i++) {
+        printf("reduced output for array %d:\n", i);
+        for (int j = 0; j < SCAN_BLOCK_DIM; j++) {
+            printf("%d ", h_out[i*SCAN_BLOCK_DIM+j]);
+        }
+        printf("\n");
+    }
+    // Copy results back to host
+
+    dim3 renderBlockDim(16, 16);
+    printf("image height is %d\n", image->height);
+    dim3 renderGridDim((image->height/patch_x + renderBlockDim.x - 1) / renderBlockDim.x, 
+                 (image->width/patch_y + renderBlockDim.y - 1) / renderBlockDim.y);
+    kernelRenderPatch<<<renderGridDim, renderBlockDim>>>(patch_x, patch_y, d_reducedOut);
+
+
+
+    // Display result for each array
+    // cudaMemcpy(h_out, d_reducedOut, size, cudaMemcpyDeviceToHost);
+    // for (int i = 0; i < num_patches; i++) {
+    //     printf("reduced output for array %d:\n", i);
+    //     for (int j = 0; j < SCAN_BLOCK_DIM; j++) {
+    //         printf("%d ", h_out[i*SCAN_BLOCK_DIM+j]);
+    //     }
+    //     printf("\n");
+    // }
+
+    // // for each patch, figure out which circle overlaps with it
+    // // store this inside of a list
+    // // run exclusive scan
+    // // run a gather kinda function to get a reduced list
+    // // draw only those pixels in the patch
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {
         printf("CUDA error: %s\n", cudaGetErrorString(err));
     }
-    cudaDeviceSynchronize();
-    printf("no error\n");
-    // first we need a function that can create a list that tells us what pixels needs to be colored
-    // daastructure, maybe can be an array of vectors, each vector can have arbitrary length
-
-
-    // then we will launch a kernel that can look into this list and then go in that order to do the coloring (each thread)
-
-    // then we can have on thread that is in charge of coloring several roles of data to reduce the number of threads created
-
-    cudaDeviceSynchronize();
+    // cudaDeviceSynchronize();
+    //     // Free device memory
+    cudaFree(d_in);
+    cudaFree(d_out);
+    // printf("no error\n");
 }
 
 
