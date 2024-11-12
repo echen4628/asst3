@@ -698,8 +698,8 @@ __global__ void kernelRenderPatch(int patch_x, int patch_y, int* d_reducedOut) {
     int maxY = min((patchYIndex+1)*cuConstRendererParams.patch_y, cuConstRendererParams.imageHeight);
 
     int patchIndex = patchYIndex*cuConstRendererParams.num_patches_x+patchXIndex;
-    printf("(%d, %d, %d): minX: %d, minY: %d, maxX: %d, maxY: %d\n", patchXIndex, patchYIndex, patchIndex,
-        minX, minY, maxX, maxY);
+    // printf("(%d, %d, %d): minX: %d, minY: %d, maxX: %d, maxY: %d\n", patchXIndex, patchYIndex, patchIndex,
+    //     minX, minY, maxX, maxY);
 
     int d_reducedOut_index = 0;
     while ((d_reducedOut_index < SCAN_BLOCK_DIM) && d_reducedOut[patchIndex*SCAN_BLOCK_DIM+d_reducedOut_index] != -1){
@@ -728,13 +728,14 @@ __global__ void kernelRenderPatch(int patch_x, int patch_y, int* d_reducedOut) {
 }
 
 
-__global__ void markOverlapsKernel(int *d_in) {
+__global__ void markOverlapsKernel(int *d_in, int circleIteration) {
     int patchXIndex = blockIdx.x;
     int patchYIndex = blockIdx.y;
     int circleIndex = threadIdx.x;
+    int actualCircleIndex = circleIteration+threadIdx.x;
 
     // int *d_in_updated = d_in + (patchYIndex*cuConstRendererParams.num_patches_x+patchXIndex) * SCAN_BLOCK_DIM;
-    if (circleIndex >= cuConstRendererParams.numCircles) {
+    if (actualCircleIndex >= cuConstRendererParams.numCircles) {
         return;
     }
     // printf("Analyzing patch (%d, %d) looking at %d\n", patchXIndex, patchYIndex, circleIndex);
@@ -747,7 +748,7 @@ __global__ void markOverlapsKernel(int *d_in) {
     // printf("(%d, %d, %d): minX: %d, minY: %d, maxX: %d, maxY: %d\n", patchXIndex, patchYIndex, circleIndex,
     //     minX, minY, maxX, maxY);
 
-    int circleIndex3 = 3 * circleIndex;
+    int circleIndex3 = 3 * actualCircleIndex;
 
     // read position and radius
     float3 p = *(float3*)(&cuConstRendererParams.position[circleIndex3]);
@@ -785,102 +786,105 @@ __global__ void exclusiveScanKernel(int *d_in, int *d_out) {
     array_out[tid] = sOutput[tid];
 }
 
-__global__ void extractIndicesKernel(int* d_in, int* d_out, int* d_reducedOut) {
+__global__ void extractIndicesKernel(int* d_in, int* d_out, int* d_reducedOut, int circleIteration) {
     int arrayIndex = blockIdx.x;
     int circleIndex = threadIdx.x;
+    int actualCircleIndex = circleIteration+threadIdx.x;
 
-    if (circleIndex >= cuConstRendererParams.numCircles)
+    if (actualCircleIndex >= cuConstRendererParams.numCircles)
     {
         return; 
     }
     if (d_in[arrayIndex*SCAN_BLOCK_DIM+circleIndex] == 1){
-        d_reducedOut[arrayIndex*SCAN_BLOCK_DIM+d_out[arrayIndex*SCAN_BLOCK_DIM+circleIndex]] = circleIndex;
+        d_reducedOut[arrayIndex*SCAN_BLOCK_DIM+d_out[arrayIndex*SCAN_BLOCK_DIM+circleIndex]] = actualCircleIndex;
     }
 }
 
 void
 CudaRenderer::render() {
-    printf("hi\n");
+
 
     int patch_x = PATCH_X;
     int patch_y = PATCH_Y;
-    printf("1\n");
     int num_patches_x = (image->width +patch_x-1)/patch_x;
     int num_patches_y = (image->height+patch_y-1)/patch_y;
     int num_patches = num_patches_x*num_patches_y;
-    printf("2\n");
-
-
-    int h_in[num_patches*SCAN_BLOCK_DIM] = {};
+    // int h_in[num_patches*SCAN_BLOCK_DIM] = {};
     int h_out[num_patches*SCAN_BLOCK_DIM] = {};
-    printf("3\n");
 
-    // Initialize input arrays (e.g., all elements as 1 for simplicity)
-    // for (int i = 0; i < num_patches; i++) {
-    //     for (int j = 0; j < SCAN_BLOCK_DIM; j++) {
-    //         h_in[i*SCAN_BLOCK_DIM+j] = 1;  // You can use different values as needed
-    //     }
-    // }
-
-
-    printf("ok so far\n");
 
     // Allocate device memory
     int *d_in, *d_out;
     int size = num_patches*SCAN_BLOCK_DIM*sizeof(int);
     cudaMalloc(&d_in, size);
     cudaMalloc(&d_out, size);
-    cudaMemcpy(d_in, h_in, size, cudaMemcpyHostToDevice);
-    printf("seems like allocated memory fine\n");
+    // cudaMemcpy(d_in, h_in, size, cudaMemcpyHostToDevice);
+    // cudaMemset(d_in, 0, size);
 
-    dim3 gridDim(num_patches_x, num_patches_y);
-    dim3 blockDim(SCAN_BLOCK_DIM, 1);
-    markOverlapsKernel<<<gridDim, blockDim>>>(d_in);
-    printf("marking circles works\n");
-    cudaMemcpy(h_out, d_in, size, cudaMemcpyDeviceToHost);
-    for (int i = 0; i < num_patches; i++) {
-        printf("marking overlap output for array %d:\n", i);
-        for (int j = 0; j < SCAN_BLOCK_DIM; j++) {
-            printf("%d ", h_out[i*SCAN_BLOCK_DIM+j]);
-        }
-        printf("\n");
-    }
-
-    // Launch kernel with ARRAY_COUNT blocks and BLOCKSIZE threads per block
-    exclusiveScanKernel<<<num_patches, SCAN_BLOCK_DIM>>>(d_in, d_out);
-    printf("exclusive scan works\n");
-
-    cudaMemcpy(h_out, d_out, size, cudaMemcpyDeviceToHost);
-    for (int i = 0; i < num_patches; i++) {
-        printf("exclusive output for array %d:\n", i);
-        for (int j = 0; j < SCAN_BLOCK_DIM; j++) {
-            printf("%d ", h_out[i*SCAN_BLOCK_DIM+j]);
-        }
-        printf("\n");
-    }
 
     int *d_reducedOut;
     cudaMalloc(&d_reducedOut, size);
-    cudaMemset(d_reducedOut, -1, size);
-    extractIndicesKernel<<<num_patches, SCAN_BLOCK_DIM>>>(d_in, d_out, d_reducedOut);
+    // cudaMemset(d_reducedOut, -1, size);
 
-    cudaMemcpy(h_out, d_reducedOut, size, cudaMemcpyDeviceToHost);
-    for (int i = 0; i < num_patches; i++) {
-        printf("reduced output for array %d:\n", i);
-        for (int j = 0; j < SCAN_BLOCK_DIM; j++) {
-            printf("%d ", h_out[i*SCAN_BLOCK_DIM+j]);
-        }
-        printf("\n");
-    }
-    // // Copy results back to host
+    dim3 gridDim(num_patches_x, num_patches_y);
+    dim3 blockDim(SCAN_BLOCK_DIM, 1);
 
     dim3 renderBlockDim(16, 16);
-    printf("image height is %d\n", image->height);
     dim3 renderGridDim((image->height/patch_x + renderBlockDim.x - 1) / renderBlockDim.x, 
                  (image->width/patch_y + renderBlockDim.y - 1) / renderBlockDim.y);
-    kernelRenderPatch<<<renderGridDim, renderBlockDim>>>(patch_x, patch_y, d_reducedOut);
+
+    for (int circleIteration=0; circleIteration<numCircles; circleIteration+=SCAN_BLOCK_DIM){
+        cudaMemset(d_in, 0, size);
+        cudaMemset(d_reducedOut, -1, size);
+        // printf("I'm on circle iteration: %d\n", circleIteration);
 
 
+        markOverlapsKernel<<<gridDim, blockDim>>>(d_in, circleIteration);
+        // cudaMemcpy(h_out, d_in, size, cudaMemcpyDeviceToHost);
+        // for (int i = 0; i < num_patches; i++) {
+        //     printf("marking overlap output for array %d:\n", i);
+        //     for (int j = 0; j < SCAN_BLOCK_DIM; j++) {
+        //         printf("%d ", h_out[i*SCAN_BLOCK_DIM+j]);
+        //     }
+        //     printf("\n");
+        // }
+
+            // Launch kernel with ARRAY_COUNT blocks and BLOCKSIZE threads per block
+        exclusiveScanKernel<<<num_patches, SCAN_BLOCK_DIM>>>(d_in, d_out);
+
+            // cudaMemcpy(h_out, d_out, size, cudaMemcpyDeviceToHost);
+            // for (int i = 0; i < num_patches; i++) {
+            //     printf("exclusive output for array %d:\n", i);
+            //     for (int j = 0; j < SCAN_BLOCK_DIM; j++) {
+            //         printf("%d ", h_out[i*SCAN_BLOCK_DIM+j]);
+            //     }
+            //     printf("\n");
+            // }
+
+            // int *d_reducedOut;
+            // cudaMalloc(&d_reducedOut, size);
+            // cudaMemset(d_reducedOut, -1, size);
+        extractIndicesKernel<<<num_patches, SCAN_BLOCK_DIM>>>(d_in, d_out, d_reducedOut, circleIteration);
+
+            // cudaMemcpy(h_out, d_reducedOut, size, cudaMemcpyDeviceToHost);
+            // for (int i = 0; i < num_patches; i++) {
+            //     printf("reduced output for array %d:\n", i);
+            //     for (int j = 0; j < SCAN_BLOCK_DIM; j++) {
+            //         printf("%d ", h_out[i*SCAN_BLOCK_DIM+j]);
+            //     }
+            //     printf("\n");
+            // }
+            // // Copy results back to host
+
+            // dim3 renderBlockDim(16, 16);
+            // dim3 renderGridDim((image->height/patch_x + renderBlockDim.x - 1) / renderBlockDim.x, 
+            //              (image->width/patch_y + renderBlockDim.y - 1) / renderBlockDim.y);
+        // kernelRenderPatch<<<renderGridDim, renderBlockDim>>>(patch_x, patch_y, d_reducedOut);
+
+
+    }
+
+    
 
     // // Display result for each array
     // // cudaMemcpy(h_out, d_reducedOut, size, cudaMemcpyDeviceToHost);
