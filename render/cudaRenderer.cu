@@ -727,6 +727,69 @@ __global__ void kernelRenderPatch(int patch_x, int patch_y, int* d_reducedOut) {
     }
 }
 
+__global__ void kernelRenderPixel(int patch_x, int patch_y, int* d_reducedOut) {
+    // short imageWidth = cuConstRendererParams.imageWidth;
+    // short imageHeight = cuConstRendererParams.imageHeight;
+
+    // float min_row = min((blockIdx.x*blockDim.x+threadIdx.x)*patch_y, imageHeight);
+    // float min_col = min((blockIdx.y*blockDim.y+threadIdx.y)*patch_x, imageWidth);
+
+    // float max_row = min((blockIdx.x*blockDim.x+threadIdx.x+1)*patch_y, imageHeight);
+    // float max_col = min((blockIdx.y*blockDim.y+threadIdx.y+1)*patch_x, imageWidth);
+
+    int XIndex = blockIdx.x*blockDim.x+threadIdx.x;
+    int YIndex = blockIdx.y*blockDim.y+threadIdx.y;
+    if (XIndex >= cuConstRendererParams.imageWidth || YIndex >= cuConstRendererParams.imageHeight){
+        return;
+    }
+
+    int patchXIndex = XIndex/cuConstRendererParams.patch_x;
+    int patchYIndex = YIndex/cuConstRendererParams.patch_y;
+    // if (patchXIndex >= cuConstRendererParams.num_patches_x || patchYIndex >= cuConstRendererParams.num_patches_y){
+    //     return;
+    // }
+    // printf("Processing patchxy: (%d, %d)\n", patchXIndex, patchYIndex);
+    // int *d_in_updated = d_in + (patchYIndex*cuConstRendererParams.num_patches_x+patchXIndex) * SCAN_BLOCK_DIM;
+
+    // int minX = min(patchXIndex*cuConstRendererParams.patch_x, cuConstRendererParams.imageWidth);
+    // int minY = min(patchYIndex*cuConstRendererParams.patch_y, cuConstRendererParams.imageHeight);
+    // int maxX = min((patchXIndex+1)*cuConstRendererParams.patch_x, cuConstRendererParams.imageWidth);
+    // int maxY = min((patchYIndex+1)*cuConstRendererParams.patch_y, cuConstRendererParams.imageHeight);
+
+    int patchIndex = patchYIndex*cuConstRendererParams.num_patches_x+patchXIndex;
+    // printf("(%d, %d, %d): minX: %d, minY: %d, maxX: %d, maxY: %d\n", patchXIndex, patchYIndex, patchIndex,
+    //     minX, minY, maxX, maxY);
+
+    int d_reducedOut_index = 0;
+    while ((d_reducedOut_index < SCAN_BLOCK_DIM) && d_reducedOut[patchIndex*SCAN_BLOCK_DIM+d_reducedOut_index] != -1){
+        int index = d_reducedOut[patchIndex*SCAN_BLOCK_DIM+d_reducedOut_index];
+        int index3 = 3 * index;
+
+        // read position and radius
+        float3 p = *(float3*)(&cuConstRendererParams.position[index3]);
+        // float  rad = cuConstRendererParams.radius[index];
+        
+        float invWidth = 1.f / cuConstRendererParams.imageWidth;
+        float invHeight = 1.f / cuConstRendererParams.imageHeight;
+
+        // for all pixels in the bonding box
+        // for (int pixelY=minY; pixelY<maxY; pixelY++) {
+        //     float4* imgPtr = (float4*)(&cuConstRendererParams.imageData[4 * (pixelY * cuConstRendererParams.imageWidth + (int) minX)]);
+        //     for (int pixelX=minX; pixelX<maxX; pixelX++) {
+        //         float2 pixelCenterNorm = make_float2(invWidth * (static_cast<float>(pixelX) + 0.5f),
+        //                                             invHeight * (static_cast<float>(pixelY) + 0.5f));
+        //         shadePixel(index, pixelCenterNorm, p, imgPtr);
+        //         imgPtr++;
+        //     }
+        // }
+        float4* imgPtr = (float4*)(&cuConstRendererParams.imageData[4 * (YIndex * cuConstRendererParams.imageWidth + (int) XIndex)]);
+        float2 pixelCenterNorm = make_float2(invWidth * (static_cast<float>(XIndex) + 0.5f),
+                                            invHeight * (static_cast<float>(YIndex) + 0.5f));
+        shadePixel(index, pixelCenterNorm, p, imgPtr);
+        
+        d_reducedOut_index += 1;
+    }
+}
 
 __global__ void markOverlapsKernel(int *d_in, int circleIteration) {
     int patchXIndex = blockIdx.x;
@@ -832,6 +895,11 @@ CudaRenderer::render() {
     dim3 renderBlockDim(16, 16);
     dim3 renderGridDim((image->height/patch_x + renderBlockDim.x - 1) / renderBlockDim.x, 
                  (image->width/patch_y + renderBlockDim.y - 1) / renderBlockDim.y);
+    
+    dim3 renderPixelBlockDim(16, 16);
+    dim3 renderPixelGridDim((image->height + renderBlockDim.x - 1) / renderBlockDim.x, 
+                 (image->width + renderBlockDim.y - 1) / renderBlockDim.y);
+
 
     for (int circleIteration=0; circleIteration<numCircles; circleIteration+=SCAN_BLOCK_DIM){
         cudaMemset(d_in, 0, size);
@@ -880,8 +948,7 @@ CudaRenderer::render() {
             // dim3 renderGridDim((image->height/patch_x + renderBlockDim.x - 1) / renderBlockDim.x, 
             //              (image->width/patch_y + renderBlockDim.y - 1) / renderBlockDim.y);
         // kernelRenderPatch<<<renderGridDim, renderBlockDim>>>(patch_x, patch_y, d_reducedOut);
-
-
+        kernelRenderPixel<<<renderPixelGridDim, renderPixelBlockDim>>>(patch_x, patch_y, d_reducedOut);
     }
 
     
