@@ -47,6 +47,7 @@ struct GlobalConstants {
     int patch_y;
     int num_patches_x;
     int num_patches_y;
+    int num_patches;
 };
 
 // Global variable that is in scope, but read-only, for all cuda
@@ -569,6 +570,7 @@ CudaRenderer::setup() {
     params.patch_y = PATCH_Y;
     params.num_patches_x = (params.imageWidth+params.patch_x-1)/params.patch_x;
     params.num_patches_y = (params.imageHeight+params.patch_y-1)/params.patch_y;
+    params.num_patches = params.num_patches_x* params.num_patches_y;
 
     cudaMemcpyToSymbol(cuConstRendererParams, &params, sizeof(GlobalConstants));
 
@@ -656,102 +658,51 @@ CudaRenderer::advanceAnimation() {
 }
 
 __global__ void kernelRenderPixels(int patch_x, int patch_y,
-                                   int* deviceCircleCountsSums, 
-                                   int* deviceCircleCountsSumsEnd, 
-                                   int* deviceCirclesAcrossPatches) {
-    // int row = blockIdx.x*blockDim.x+threadIdx.x;
-    // int col = blockIdx.y*blockDim.y+threadIdx.y;
+                                   int* d_list) {
+    // short imageWidth = cuConstRendererParams.imageWidth;
+    // short imageHeight = cuConstRendererParams.imageHeight;
 
-
-    // short screenMinX = max(0, min(minX, imageWidth));
-    short imageWidth = cuConstRendererParams.imageWidth;
-    short imageHeight = cuConstRendererParams.imageHeight;
-
-    int patch_idx_x = (blockIdx.x*blockDim.x+threadIdx.x);
-    if (patch_idx_x >= cuConstRendererParams.num_patches_x){
-        return;
-    }
-    int patch_idx_y = (blockIdx.y*blockDim.y+threadIdx.y);
-    if (patch_idx_y >= cuConstRendererParams.num_patches_y){
-        return;
-    }
-    int patch_idx = patch_idx_y*cuConstRendererParams.num_patches_x+patch_idx_x;
-    // if (patch_idx >= cuConstRendererParams.num_patches_x*cuConstRendererParams.num_patches_y){
+    // int patch_idx_x = (blockIdx.x*blockDim.x+threadIdx.x);
+    // if (patch_idx_x >= cuConstRendererParams.num_patches_x){
     //     return;
     // }
-    printf("I'm on pat_x: %d, pat_y: %d, patch %d, deviceCircleCountsSums: %d, deviceCircleCountsSumsEnd: %d\n", patch_idx_x, patch_idx_y, patch_idx, deviceCircleCountsSums[patch_idx], deviceCircleCountsSumsEnd[patch_idx]);
-    if (deviceCircleCountsSums[patch_idx] == deviceCircleCountsSumsEnd[patch_idx]){
-        printf("nothinig to draw\n");
-        return;
-    }
+    // int patch_idx_y = (blockIdx.y*blockDim.y+threadIdx.y);
+    // if (patch_idx_y >= cuConstRendererParams.num_patches_y){
+    //     return;
+    // }
+    // int patch_idx = patch_idx_y*cuConstRendererParams.num_patches_x+patch_idx_x;
 
-    float min_row = max(0, min((blockIdx.x*blockDim.x+threadIdx.x)*patch_y, imageHeight));
-    float min_col = max(0, min((blockIdx.y*blockDim.y+threadIdx.y)*patch_x, imageWidth));
+    // float min_row = max(0, min((blockIdx.x*blockDim.x+threadIdx.x)*patch_y, imageHeight));
+    // float min_col = max(0, min((blockIdx.y*blockDim.y+threadIdx.y)*patch_x, imageWidth));
 
-    float max_row = max(0, min((blockIdx.x*blockDim.x+threadIdx.x+1)*patch_y, imageHeight));
-    float max_col = max(0, min((blockIdx.y*blockDim.y+threadIdx.y+1)*patch_x, imageWidth));
-
-    // printf("test %d\n", deviceCirclesAcrossPatches[1]);
-
-    for (int index=deviceCircleCountsSums[patch_idx]; index < deviceCircleCountsSumsEnd[patch_idx]; index++){
-        // printf("hi %d\n", index);
-        // printf("bye %d\n", deviceCirclesAcrossPatches[index]);
-        int circle_index = deviceCirclesAcrossPatches[index];
-        printf("[patch %d]: I want to draw circle %d\n", patch_idx, circle_index);
-        int index3 = 3 * circle_index;
-
-        // read position and radius
-        float3 p = *(float3*)(&cuConstRendererParams.position[index3]);
-        // float  rad = cuConstRendererParams.radius[circle_index];
-        
+    // float max_row = max(0, min((blockIdx.x*blockDim.x+threadIdx.x+1)*patch_y, imageHeight));
+    // float max_col = max(0, min((blockIdx.y*blockDim.y+threadIdx.y+1)*patch_x, imageWidth));
 
 
-        // compute the bounding box of the circle. The bound is in integer
-        // screen coordinates, so it's clamped to the edges of the screen.
+    // for (int index=patch_idx*cuConstRendererParams.numCircles; index < (patch_idx+1)*cuConstRendererParams.numCircles; index++){
 
-        // float circleCenterX = imageWidth*(p.x);
-        // float circleCenterY = imageHeight*(p.y);
-        // if ((row-circleCenterY)*(row-circleCenterY)+(col-circleCenterX)*(col-circleCenterX) > rad){
-        //     continue;
-        // }
+    //     if (d_list[index] == -1){
+    //         break;
+    //     }
+    //     int circle_index = d_list[index];
+    //     int index3 = 3 * circle_index;
 
-        // printf("Row: %d, Col %d, circleCenterX: %f, circleCenterY: %f\n", min_row, min_col, circleCenterX, circleCenterY);
+    //     // read position and radius
+    //     float3 p = *(float3*)(&cuConstRendererParams.position[index3]);
+    //     float invWidth = 1.f / imageWidth;
+    //     float invHeight = 1.f / imageHeight;
 
-        // if (0 == circleInBoxConservative(p.x, p.y, rad, min_col/imageWidth, max_col/imageWidth,
-        //                         max_row/imageHeight, min_row/imageHeight)){
-        //                             continue;
-        //                         }
-
-
-        // short minX = static_cast<short>(imageWidth * (p.x - rad));
-        // short maxX = static_cast<short>(imageWidth * (p.x + rad)) + 1;
-        // short minY = static_cast<short>(imageHeight * (p.y - rad));
-        // short maxY = static_cast<short>(imageHeight * (p.y + rad)) + 1;
-        // if (!(minX <= col <maxX) || !(minY <= row < maxY)){
-        //     continue;
-        // }
-        // printf("Row: %d, Col %d, circleCenterX: %f, circleCenterY: %f\n", min_row, min_col, circleCenterX, circleCenterY);
-        // printf("should be painting\n");
-        // // a bunch of clamps.  Is there a CUDA built-in for this?
-        // short screenMinX = (minX > 0) ? ((minX < imageWidth) ? minX : imageWidth) : 0;
-        // short screenMaxX = (maxX > 0) ? ((maxX < imageWidth) ? maxX : imageWidth) : 0;
-        // short screenMinY = (minY > 0) ? ((minY < imageHeight) ? minY : imageHeight) : 0;
-        // short screenMaxY = (maxY > 0) ? ((maxY < imageHeight) ? maxY : imageHeight) : 0;
-
-        float invWidth = 1.f / imageWidth;
-        float invHeight = 1.f / imageHeight;
-
-        // for all pixels in the bonding box
-        for (int pixelY=min_row; pixelY<max_row; pixelY++) {
-            float4* imgPtr = (float4*)(&cuConstRendererParams.imageData[4 * (pixelY * imageWidth + (int) min_col)]);
-            for (int pixelX=min_col; pixelX<max_col; pixelX++) {
-                float2 pixelCenterNorm = make_float2(invWidth * (static_cast<float>(pixelX) + 0.5f),
-                                                    invHeight * (static_cast<float>(pixelY) + 0.5f));
-                shadePixel(circle_index, pixelCenterNorm, p, imgPtr);
-                imgPtr++;
-            }
-        }
-    }
+    //     // for all pixels in the bounding box
+    //     for (int pixelY=min_row; pixelY<max_row; pixelY++) {
+    //         float4* imgPtr = (float4*)(&cuConstRendererParams.imageData[4 * (pixelY * imageWidth + (int) min_col)]);
+    //         for (int pixelX=min_col; pixelX<max_col; pixelX++) {
+    //             float2 pixelCenterNorm = make_float2(invWidth * (static_cast<float>(pixelX) + 0.5f),
+    //                                                 invHeight * (static_cast<float>(pixelY) + 0.5f));
+    //             shadePixel(circle_index, pixelCenterNorm, p, imgPtr);
+    //             imgPtr++;
+    //         }
+    //     }
+    // }
 }
 
 __global__ void kernelCountCounts (int* deviceCircleCountsPerPatch) {
@@ -796,10 +747,10 @@ __global__ void kernelCountCounts (int* deviceCircleCountsPerPatch) {
             int currentPatchY = pixelY/cuConstRendererParams.patch_y;
             int currentPatchX = pixelX/cuConstRendererParams.patch_x;
             // printf("pixelY: %d, pixelX: %d should +1\n", currentPatchY, currentPatchX);
-            atomicAdd(&deviceCircleCountsPerPatch[currentPatchY*cuConstRendererParams.num_patches_x+currentPatchX], 1);
+            // atomicAdd(&deviceCircleCountsPerPatch[currentPatchY*cuConstRendererParams.num_patches_x+currentPatchX], 1);
+            deviceCircleCountsPerPatch[(currentPatchY*cuConstRendererParams.num_patches_x + currentPatchX)*cuConstRendererParams.numCircles+index] = 1;
         }
     }
-    
 }
 
 __global__ void kernelMoveCirclesToPatches (int* deviceCircleCountsSums,
@@ -852,6 +803,19 @@ __global__ void kernelMoveCirclesToPatches (int* deviceCircleCountsSums,
     
 }
 
+__global__ void kernel_reduce (int* deviceCircleCountsSums,
+                               int* deviceCircleCountsPerPatch,
+                               int* d_list) {
+    int patch_index = blockIdx.x*blockDim.x + threadIdx.x;
+    int circle_index = blockIdx.y*blockDim.y + threadIdx.y;
+
+    if (deviceCircleCountsPerPatch[patch_index*cuConstRendererParams.num_patches+circle_index] == 1){
+        d_list[deviceCircleCountsSums[patch_index*cuConstRendererParams.num_patches+circle_index]] = circle_index;
+    } else {
+        d_list[deviceCircleCountsSums[patch_index*cuConstRendererParams.num_patches+circle_index]] = -1;
+    }
+}
+
 void print_array2(int* array, int N) {
     printf("[");
     for(int i = 0; i < N; i++) {
@@ -879,76 +843,49 @@ CudaRenderer::render() {
     printf("patch_x: %d, patch_y: %d\n", patch_x, patch_y);
     printf("num_patches_x: %d, num_patches_y: %d\n", num_patches_x, num_patches_y);
 
-    int circleCountsPerPatch[num_patches+1] = { };
+
+    // allocate num_patches by numCircles and then mark 1 if there is a circle there
+    // int circleCountsPerPatch[num_patches+1] = { };
     int* deviceCircleCountsPerPatch;
-    cudaMalloc(&deviceCircleCountsPerPatch, sizeof(int) * (num_patches+1));
-    cudaMemcpy(deviceCircleCountsPerPatch, circleCountsPerPatch, sizeof(int) * (num_patches+1), cudaMemcpyHostToDevice);
+    cudaMalloc(&deviceCircleCountsPerPatch, sizeof(int) * (num_patches)*(numCircles));
+    cudaMemset(&deviceCircleCountsPerPatch, 0, sizeof(int) * (num_patches)*(numCircles));
+    // cudaMemcpy(deviceCircleCountsPerPatch, circleCountsPerPatch, sizeof(int) * (num_patches+1), cudaMemcpyHostToDevice);
 
     dim3 circlesBlockDim(256, 1);
     dim3 circlesGridDim((numCircles+circlesBlockDim.x-1)/circlesBlockDim.x);
 
     kernelCountCounts<<<circlesGridDim, circlesBlockDim>>>(deviceCircleCountsPerPatch);
 
-    cudaMemcpy(circleCountsPerPatch, deviceCircleCountsPerPatch, sizeof(int) * (num_patches+1), cudaMemcpyDeviceToHost);
-    printf("circleCountsPerPatch: ");
-    print_array2(circleCountsPerPatch, num_patches+1);
-    printf("num_patches_x: %d, num_patches_y: %d\n", num_patches_x, num_patches_y);
 
-
-    // Allocate memory for the prefix sum result on the device
+    // exclusive scan
     int* deviceCircleCountsSums;
-    cudaMalloc(&deviceCircleCountsSums, sizeof(int) * (num_patches+1));
+    cudaMalloc(&deviceCircleCountsSums, sizeof(int) * (num_patches)*(numCircles));
+    cudaMemset(&deviceCircleCountsSums, 0, sizeof(int) * (num_patches)*(numCircles));
 
-    // Step 1: Wrap raw device pointers with thrust::device_ptr
-    thrust::device_ptr<int> dev_ptr_counts(deviceCircleCountsPerPatch);
-    thrust::device_ptr<int> dev_ptr_sums(deviceCircleCountsSums);
-
-    // Step 2: Perform exclusive scan
-    thrust::exclusive_scan(dev_ptr_counts, dev_ptr_counts + (num_patches+1), dev_ptr_sums);
-
-    // Optional: Copy back to host to verify the result (for debugging purposes)
-    int circleCountsSums[num_patches+1];
-    cudaMemcpy(circleCountsSums, deviceCircleCountsSums, sizeof(int) * (num_patches+1), cudaMemcpyDeviceToHost);
-    printf("circleCountsSums: ");
-    print_array2(circleCountsSums, (num_patches+1));
-
-    int* deviceCircleCountsSumsEnd;
-    cudaMalloc(&deviceCircleCountsSumsEnd, sizeof(int) * (num_patches+1));
-    cudaMemcpy(deviceCircleCountsSumsEnd, deviceCircleCountsSums, sizeof(int) * (num_patches+1), cudaMemcpyDeviceToDevice);
-
-    int* deviceCirclesAcrossPatches;
-    cudaMalloc(&deviceCirclesAcrossPatches, sizeof(int)*(circleCountsSums[num_patches]));
-    cudaMemset(deviceCirclesAcrossPatches, 0, sizeof(int)*(circleCountsSums[num_patches]));
-    kernelMoveCirclesToPatches<<<circlesGridDim, circlesBlockDim>>>(deviceCircleCountsSumsEnd, deviceCirclesAcrossPatches);
-    int circlesAcrossPatches[circleCountsSums[num_patches]];
-    cudaMemcpy(circlesAcrossPatches, deviceCirclesAcrossPatches, sizeof(int) * circleCountsSums[num_patches], cudaMemcpyDeviceToHost);
-    printf("circlesAcrossPatches: ");
-    print_array2(circlesAcrossPatches, circleCountsSums[num_patches]);
-
-    cudaMemcpy(circleCountsSums, deviceCircleCountsSums, sizeof(int) * (num_patches+1), cudaMemcpyDeviceToHost);
-    printf("circleCountsSumsStart: ");
-    print_array2(circleCountsSums, (num_patches+1));
-
-    int circleCountsSumsEnd[num_patches+1];
-    cudaMemcpy(circleCountsSumsEnd, deviceCircleCountsSumsEnd, sizeof(int) * (num_patches+1), cudaMemcpyDeviceToHost);
-    printf("circleCountsSumsEnd: ");
-    print_array2(circleCountsSumsEnd, (num_patches+1));
-
-
-    thrust::device_ptr<int> dev_circles_across_patches(deviceCirclesAcrossPatches);
-
-    for (int i=0; i<num_patches; i++){
-        thrust::sort(thrust::device, dev_circles_across_patches+circleCountsSums[i], dev_circles_across_patches+circleCountsSumsEnd[i]);
+    for (int i=0; i<num_patches; i++)
+    {
+        thrust::device_ptr<int> dev_ptr_counts(deviceCircleCountsPerPatch+i*numCircles);
+        thrust::device_ptr<int> dev_ptr_sums(deviceCircleCountsSums+i*numCircles);
+        thrust::exclusive_scan(dev_ptr_counts, dev_ptr_counts + (numCircles+1), dev_ptr_sums);
     }
-    cudaMemcpy(circlesAcrossPatches, deviceCirclesAcrossPatches, sizeof(int) * circleCountsSums[num_patches], cudaMemcpyDeviceToHost);
-    printf("circlesAcrossPatchesSorted: ");
-    print_array2(circlesAcrossPatches, circleCountsSums[num_patches]);
+    
+    dim3 reduceBlockDim(16,16);
+    dim3 reduceGridDim((num_patches+reduceBlockDim.x-1)/reduceBlockDim.x,
+                        (numCircles+reduceBlockDim.y-1)/reduceBlockDim.y);
+    int *d_list;
+    cudaMalloc(&d_list, sizeof(int)*num_patches*numCircles);
+    cudaMemset(&d_list, 0, sizeof(int) * (num_patches)*(numCircles));
 
-    dim3 blockDim(16, 16);
+    kernel_reduce<<<reduceGridDim, reduceBlockDim>>>(deviceCircleCountsSums,deviceCircleCountsPerPatch, d_list);
 
-    dim3 gridDim((image->height/patch_x + blockDim.x - 1) / blockDim.x, 
-                 (image->width/patch_y + blockDim.y - 1) / blockDim.y);
-    kernelRenderPixels<<<gridDim, blockDim>>>(patch_x, patch_y, deviceCircleCountsSums, deviceCircleCountsSumsEnd, deviceCirclesAcrossPatches);
+
+    dim3 patchBlockDim(16,16);
+
+    dim3 patchGridDim((image->height/patch_x + patchBlockDim.x - 1) / patchBlockDim.x, 
+                        (image->width/patch_y + patchBlockDim.y - 1) / patchBlockDim.y);
+    
+
+    kernelRenderPixels2<<<patchGridDim, patchBlockDim>>>(patch_x, patch_y, d_list);
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {
         printf("CUDA error: %s\n", cudaGetErrorString(err));
