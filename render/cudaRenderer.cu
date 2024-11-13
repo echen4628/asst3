@@ -752,7 +752,7 @@ __global__ void kernelRenderPixel(int patch_x, int patch_y, int* d_reducedOut) {
     *imgPtr = tempColor;
 }
 
-__global__ void markOverlapsKernel(int *d_in, int circleIteration) {
+__global__ void markOverlapsKernel(int *cirle_patches_overlaps, int circleIteration) {
     int patchXIndex = blockIdx.x;
     int patchYIndex = blockIdx.y;
     int circleIndex = threadIdx.x;
@@ -773,38 +773,34 @@ __global__ void markOverlapsKernel(int *d_in, int circleIteration) {
     float3 p = *(float3*)(&cuConstRendererParams.position[circleIndex3]);
     float  rad = cuConstRendererParams.radius[actualCircleIndex];
 
-    d_in[(patchYIndex*cuConstRendererParams.num_patches_x+patchXIndex)*SCAN_BLOCK_DIM+circleIndex] = circleInBox(p.x, p.y, rad,  minX/cuConstRendererParams.imageWidth,  maxX/cuConstRendererParams.imageWidth,
+    cirle_patches_overlaps[(patchYIndex*cuConstRendererParams.num_patches_x+patchXIndex)*SCAN_BLOCK_DIM+circleIndex] = circleInBox(p.x, p.y, rad,  minX/cuConstRendererParams.imageWidth,  maxX/cuConstRendererParams.imageWidth,
                  maxY/cuConstRendererParams.imageHeight,  minY/cuConstRendererParams.imageHeight);
 
 
 }
 
-__global__ void exclusiveScanKernel(int *d_in, int *d_out) {
-    int arrayIndex = blockIdx.x;
-    int tid = threadIdx.x;
+__global__ void exclusiveScanKernel(int *cirle_patches_overlaps, int *exclusive_scan_out) {
+    int patch_index = blockIdx.x;
+    int circle_index = threadIdx.x;
 
-    // Offset pointers for each array
-    int *array_in = d_in + arrayIndex * SCAN_BLOCK_DIM;
-    int *array_out = d_out + arrayIndex * SCAN_BLOCK_DIM;
+    int *array_in = cirle_patches_overlaps + patch_index * SCAN_BLOCK_DIM;
+    int *array_out = exclusive_scan_out + patch_index * SCAN_BLOCK_DIM;
 
-    // Define shared memory for the scan operation within each block
     __shared__ uint sInput[SCAN_BLOCK_DIM];
     __shared__ uint sOutput[SCAN_BLOCK_DIM];
     __shared__ uint sScratch[2 * SCAN_BLOCK_DIM];
 
-    // Load input data for this array into shared memory
-    sInput[tid] = array_in[tid];
+    sInput[circle_index] = array_in[circle_index];
     __syncthreads();
 
     // Perform exclusive scan
-    sharedMemExclusiveScan(tid, sInput, sOutput, sScratch, SCAN_BLOCK_DIM);
+    sharedMemExclusiveScan(circle_index, sInput, sOutput, sScratch, SCAN_BLOCK_DIM);
 
-    // Write the output from shared memory back to global memory
-    array_out[tid] = sOutput[tid];
+    array_out[circle_index] = sOutput[circle_index];
 }
 
-__global__ void extractIndicesKernel(int* d_in, int* d_out, int* d_reducedOut, int circleIteration) {
-    int arrayIndex = blockIdx.x;
+__global__ void extractIndicesKernel(int* cirle_patches_overlaps, int* exclusive_scan_out, int* d_reducedOut, int circleIteration) {
+    int patch_index = blockIdx.x;
     int circleIndex = threadIdx.x;
     int actualCircleIndex = circleIteration+threadIdx.x;
 
@@ -812,8 +808,8 @@ __global__ void extractIndicesKernel(int* d_in, int* d_out, int* d_reducedOut, i
     {
         return; 
     }
-    if (d_in[arrayIndex*SCAN_BLOCK_DIM+circleIndex] == 1){
-        d_reducedOut[arrayIndex*SCAN_BLOCK_DIM+d_out[arrayIndex*SCAN_BLOCK_DIM+circleIndex]] = actualCircleIndex;
+    if (cirle_patches_overlaps[patch_index*SCAN_BLOCK_DIM+circleIndex] == 1){
+        d_reducedOut[patch_index*SCAN_BLOCK_DIM+exclusive_scan_out[patch_index*SCAN_BLOCK_DIM+circleIndex]] = actualCircleIndex;
     }
 }
 
@@ -826,10 +822,10 @@ CudaRenderer::render() {
     int num_patches_y = (image->height+patch_y-1)/patch_y;
     int num_patches = num_patches_x*num_patches_y;
 
-    int *d_in, *d_out;
+    int *cirle_patches_overlaps, *exclusive_scan_out;
     int size = num_patches*SCAN_BLOCK_DIM*sizeof(int);
-    cudaMalloc(&d_in, size);
-    cudaMalloc(&d_out, size);
+    cudaMalloc(&cirle_patches_overlaps, size);
+    cudaMalloc(&exclusive_scan_out, size);
 
     int *d_reducedOut;
     cudaMalloc(&d_reducedOut, size);
@@ -847,12 +843,12 @@ CudaRenderer::render() {
 
 
     for (int circleIteration=0; circleIteration<numCircles; circleIteration+=SCAN_BLOCK_DIM){
-        cudaMemset(d_in, 0, size);
-        // cudaMemset(d_out, 0, size);
+        cudaMemset(cirle_patches_overlaps, 0, size);
+        // cudaMemset(exclusive_scan_out, 0, size);
         cudaMemset(d_reducedOut, -1, size);
-        markOverlapsKernel<<<gridDim, blockDim>>>(d_in, circleIteration);
-        exclusiveScanKernel<<<num_patches, SCAN_BLOCK_DIM>>>(d_in, d_out);
-        extractIndicesKernel<<<num_patches, SCAN_BLOCK_DIM>>>(d_in, d_out, d_reducedOut, circleIteration);
+        markOverlapsKernel<<<gridDim, blockDim>>>(cirle_patches_overlaps, circleIteration);
+        exclusiveScanKernel<<<num_patches, SCAN_BLOCK_DIM>>>(cirle_patches_overlaps, exclusive_scan_out);
+        extractIndicesKernel<<<num_patches, SCAN_BLOCK_DIM>>>(cirle_patches_overlaps, exclusive_scan_out, d_reducedOut, circleIteration);
         kernelRenderPixel<<<renderPixelGridDim, renderPixelBlockDim>>>(patch_x, patch_y, d_reducedOut);
     }
 }
