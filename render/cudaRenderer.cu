@@ -29,8 +29,8 @@
 ///////////////////////////////////////////////////////////////////////////////////////
 // #define PATCH_X 256;
 // #define PATCH_Y 256;
-#define PATCH_X 256;
-#define PATCH_Y 256;
+#define PATCH_X 512;
+#define PATCH_Y 512;
 
 struct GlobalConstants {
 
@@ -803,25 +803,37 @@ __global__ void markOverlapsKernel(int *d_in, int circleIteration) {
     }
     // printf("Analyzing patch (%d, %d) looking at %d\n", patchXIndex, patchYIndex, circleIndex);
 
-    int minX = min(patchXIndex*cuConstRendererParams.patch_x, cuConstRendererParams.imageWidth);
-    int minY = min(patchYIndex*cuConstRendererParams.patch_y, cuConstRendererParams.imageHeight);
-    int maxX = min((patchXIndex+1)*cuConstRendererParams.patch_x, cuConstRendererParams.imageWidth);
-    int maxY = min((patchYIndex+1)*cuConstRendererParams.patch_y, cuConstRendererParams.imageHeight);
+    float minX = min(patchXIndex*cuConstRendererParams.patch_x, cuConstRendererParams.imageWidth);
+    float minY = min(patchYIndex*cuConstRendererParams.patch_y, cuConstRendererParams.imageHeight);
+    float maxX = min((patchXIndex+1)*cuConstRendererParams.patch_x+1, cuConstRendererParams.imageWidth);
+    float maxY = min((patchYIndex+1)*cuConstRendererParams.patch_y+1, cuConstRendererParams.imageHeight);
 
-    // printf("(%d, %d, %d): minX: %d, minY: %d, maxX: %d, maxY: %d\n", patchXIndex, patchYIndex, circleIndex,
+    // if (circleIteration == 0){
+    //     printf("(%d, %d, %d, %d): minX: %d, minY: %d, maxX: %d, maxY: %d\n", patchXIndex, patchYIndex, actualCircleIndex, circleIteration,
     //     minX, minY, maxX, maxY);
+    // }
+
 
     int circleIndex3 = 3 * actualCircleIndex;
 
     // read position and radius
     float3 p = *(float3*)(&cuConstRendererParams.position[circleIndex3]);
-    float  rad = cuConstRendererParams.radius[circleIndex];
-// d_in_updated[circleIndex]
-    d_in[(patchYIndex*cuConstRendererParams.num_patches_x+patchXIndex)*SCAN_BLOCK_DIM+circleIndex] = circleInBox(p.x, p.y, rad, (float) minX/cuConstRendererParams.imageWidth, (float) maxX/cuConstRendererParams.imageWidth,
-                (float) maxY/cuConstRendererParams.imageHeight, (float) minY/cuConstRendererParams.imageHeight);
-    // printf("(%d, %d, %d): minX: %d, minY: %d, maxX: %d, maxY: %d d_in would be %d\n", patchXIndex, patchYIndex, circleIndex,
-    //     minX, minY, maxX, maxY, temp_result);
-    // d_in[(patchYIndex*cuConstRendererParams.num_patches_x+patchXIndex)*SCAN_BLOCK_DIM+circleIndex] = temp_result;
+    float  rad = cuConstRendererParams.radius[actualCircleIndex];
+
+
+    
+    // d_in[(patchYIndex*cuConstRendererParams.num_patches_x+patchXIndex)*SCAN_BLOCK_DIM+circleIndex] = 1;
+
+    // float minCircleX = static_cast<short>(cuConstRendererParams.imageWidth * (p.x - rad));
+    // float maxCircleX = static_cast<short>(cuConstRendererParams.imageWidth * (p.x + rad)) + 1;
+    // float minCircleY = static_cast<short>(cuConstRendererParams.imageHeight * (p.y - rad));
+    // float maxCircleY = static_cast<short>(cuConstRendererParams.imageHeight * (p.y + rad)) + 1;
+
+
+
+    d_in[(patchYIndex*cuConstRendererParams.num_patches_x+patchXIndex)*SCAN_BLOCK_DIM+circleIndex] = circleInBoxConservative(p.x, p.y, rad,  minX/1024.0,  maxX/1024.0,
+                 maxY/1024.0,  minY/1024.0);
+
 
 }
 
@@ -873,7 +885,7 @@ CudaRenderer::render() {
     int num_patches_y = (image->height+patch_y-1)/patch_y;
     int num_patches = num_patches_x*num_patches_y;
     // int h_in[num_patches*SCAN_BLOCK_DIM] = {};
-    int h_out[num_patches*SCAN_BLOCK_DIM] = {};
+    // int h_out[num_patches*SCAN_BLOCK_DIM] = {};
 
 
     // Allocate device memory
@@ -881,13 +893,9 @@ CudaRenderer::render() {
     int size = num_patches*SCAN_BLOCK_DIM*sizeof(int);
     cudaMalloc(&d_in, size);
     cudaMalloc(&d_out, size);
-    // cudaMemcpy(d_in, h_in, size, cudaMemcpyHostToDevice);
-    // cudaMemset(d_in, 0, size);
-
 
     int *d_reducedOut;
     cudaMalloc(&d_reducedOut, size);
-    // cudaMemset(d_reducedOut, -1, size);
 
     dim3 gridDim(num_patches_x, num_patches_y);
     dim3 blockDim(SCAN_BLOCK_DIM, 1);
@@ -903,6 +911,7 @@ CudaRenderer::render() {
 
     for (int circleIteration=0; circleIteration<numCircles; circleIteration+=SCAN_BLOCK_DIM){
         cudaMemset(d_in, 0, size);
+        cudaMemset(d_out, 0, size);
         cudaMemset(d_reducedOut, -1, size);
         // printf("I'm on circle iteration: %d\n", circleIteration);
 
