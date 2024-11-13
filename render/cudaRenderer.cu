@@ -675,31 +675,19 @@ void print_array2(int* array, int N) {
 // }
 
 __global__ void kernelRenderPatch(int patch_x, int patch_y, int* d_reducedOut) {
-    // short imageWidth = cuConstRendererParams.imageWidth;
-    // short imageHeight = cuConstRendererParams.imageHeight;
-
-    // float min_row = min((blockIdx.x*blockDim.x+threadIdx.x)*patch_y, imageHeight);
-    // float min_col = min((blockIdx.y*blockDim.y+threadIdx.y)*patch_x, imageWidth);
-
-    // float max_row = min((blockIdx.x*blockDim.x+threadIdx.x+1)*patch_y, imageHeight);
-    // float max_col = min((blockIdx.y*blockDim.y+threadIdx.y+1)*patch_x, imageWidth);
-
+ 
     int patchXIndex = blockIdx.x*blockDim.x+threadIdx.x;
     int patchYIndex = blockIdx.y*blockDim.y+threadIdx.y;
     if (patchXIndex >= cuConstRendererParams.num_patches_x || patchYIndex >= cuConstRendererParams.num_patches_y){
         return;
     }
-    // printf("Processing patchxy: (%d, %d)\n", patchXIndex, patchYIndex);
-    // int *d_in_updated = d_in + (patchYIndex*cuConstRendererParams.num_patches_x+patchXIndex) * SCAN_BLOCK_DIM;
-
+ 
     int minX = min(patchXIndex*cuConstRendererParams.patch_x, cuConstRendererParams.imageWidth);
     int minY = min(patchYIndex*cuConstRendererParams.patch_y, cuConstRendererParams.imageHeight);
     int maxX = min((patchXIndex+1)*cuConstRendererParams.patch_x, cuConstRendererParams.imageWidth);
     int maxY = min((patchYIndex+1)*cuConstRendererParams.patch_y, cuConstRendererParams.imageHeight);
 
     int patchIndex = patchYIndex*cuConstRendererParams.num_patches_x+patchXIndex;
-    // printf("(%d, %d, %d): minX: %d, minY: %d, maxX: %d, maxY: %d\n", patchXIndex, patchYIndex, patchIndex,
-    //     minX, minY, maxX, maxY);
 
     int d_reducedOut_index = 0;
     while ((d_reducedOut_index < SCAN_BLOCK_DIM) && d_reducedOut[patchIndex*SCAN_BLOCK_DIM+d_reducedOut_index] != -1){
@@ -708,7 +696,6 @@ __global__ void kernelRenderPatch(int patch_x, int patch_y, int* d_reducedOut) {
 
         // read position and radius
         float3 p = *(float3*)(&cuConstRendererParams.position[index3]);
-        // float  rad = cuConstRendererParams.radius[index];
         
         float invWidth = 1.f / cuConstRendererParams.imageWidth;
         float invHeight = 1.f / cuConstRendererParams.imageHeight;
@@ -728,14 +715,6 @@ __global__ void kernelRenderPatch(int patch_x, int patch_y, int* d_reducedOut) {
 }
 
 __global__ void kernelRenderPixel(int patch_x, int patch_y, int* d_reducedOut) {
-    // short imageWidth = cuConstRendererParams.imageWidth;
-    // short imageHeight = cuConstRendererParams.imageHeight;
-
-    // float min_row = min((blockIdx.x*blockDim.x+threadIdx.x)*patch_y, imageHeight);
-    // float min_col = min((blockIdx.y*blockDim.y+threadIdx.y)*patch_x, imageWidth);
-
-    // float max_row = min((blockIdx.x*blockDim.x+threadIdx.x+1)*patch_y, imageHeight);
-    // float max_col = min((blockIdx.y*blockDim.y+threadIdx.y+1)*patch_x, imageWidth);
 
     int XIndex = blockIdx.x*blockDim.x+threadIdx.x;
     int YIndex = blockIdx.y*blockDim.y+threadIdx.y;
@@ -745,50 +724,32 @@ __global__ void kernelRenderPixel(int patch_x, int patch_y, int* d_reducedOut) {
 
     int patchXIndex = XIndex/cuConstRendererParams.patch_x;
     int patchYIndex = YIndex/cuConstRendererParams.patch_y;
-    // if (patchXIndex >= cuConstRendererParams.num_patches_x || patchYIndex >= cuConstRendererParams.num_patches_y){
-    //     return;
-    // }
-    // printf("Processing patchxy: (%d, %d)\n", patchXIndex, patchYIndex);
-    // int *d_in_updated = d_in + (patchYIndex*cuConstRendererParams.num_patches_x+patchXIndex) * SCAN_BLOCK_DIM;
-
-    // int minX = min(patchXIndex*cuConstRendererParams.patch_x, cuConstRendererParams.imageWidth);
-    // int minY = min(patchYIndex*cuConstRendererParams.patch_y, cuConstRendererParams.imageHeight);
-    // int maxX = min((patchXIndex+1)*cuConstRendererParams.patch_x, cuConstRendererParams.imageWidth);
-    // int maxY = min((patchYIndex+1)*cuConstRendererParams.patch_y, cuConstRendererParams.imageHeight);
 
     int patchIndex = patchYIndex*cuConstRendererParams.num_patches_x+patchXIndex;
-    // printf("(%d, %d, %d): minX: %d, minY: %d, maxX: %d, maxY: %d\n", patchXIndex, patchYIndex, patchIndex,
-    //     minX, minY, maxX, maxY);
-
+    
     int d_reducedOut_index = 0;
+    if (d_reducedOut[patchIndex*SCAN_BLOCK_DIM+d_reducedOut_index] == -1) {
+        return;
+    }
+
+    float invWidth = 1.f / cuConstRendererParams.imageWidth;
+    float invHeight = 1.f / cuConstRendererParams.imageHeight;
+    float4* imgPtr = (float4*)(&cuConstRendererParams.imageData[4 * (YIndex * cuConstRendererParams.imageWidth + (int) XIndex)]);
+    float2 pixelCenterNorm = make_float2(invWidth * (static_cast<float>(XIndex) + 0.5f),
+                                        invHeight * (static_cast<float>(YIndex) + 0.5f));
+
+    float4 tempColor = *imgPtr;
     while ((d_reducedOut_index < SCAN_BLOCK_DIM) && d_reducedOut[patchIndex*SCAN_BLOCK_DIM+d_reducedOut_index] != -1){
         int index = d_reducedOut[patchIndex*SCAN_BLOCK_DIM+d_reducedOut_index];
         int index3 = 3 * index;
 
-        // read position and radius
         float3 p = *(float3*)(&cuConstRendererParams.position[index3]);
-        // float  rad = cuConstRendererParams.radius[index];
         
-        float invWidth = 1.f / cuConstRendererParams.imageWidth;
-        float invHeight = 1.f / cuConstRendererParams.imageHeight;
-
-        // for all pixels in the bonding box
-        // for (int pixelY=minY; pixelY<maxY; pixelY++) {
-        //     float4* imgPtr = (float4*)(&cuConstRendererParams.imageData[4 * (pixelY * cuConstRendererParams.imageWidth + (int) minX)]);
-        //     for (int pixelX=minX; pixelX<maxX; pixelX++) {
-        //         float2 pixelCenterNorm = make_float2(invWidth * (static_cast<float>(pixelX) + 0.5f),
-        //                                             invHeight * (static_cast<float>(pixelY) + 0.5f));
-        //         shadePixel(index, pixelCenterNorm, p, imgPtr);
-        //         imgPtr++;
-        //     }
-        // }
-        float4* imgPtr = (float4*)(&cuConstRendererParams.imageData[4 * (YIndex * cuConstRendererParams.imageWidth + (int) XIndex)]);
-        float2 pixelCenterNorm = make_float2(invWidth * (static_cast<float>(XIndex) + 0.5f),
-                                            invHeight * (static_cast<float>(YIndex) + 0.5f));
-        shadePixel(index, pixelCenterNorm, p, imgPtr);
+        shadePixel(index, pixelCenterNorm, p, &tempColor);
         
         d_reducedOut_index += 1;
     }
+    *imgPtr = tempColor;
 }
 
 __global__ void markOverlapsKernel(int *d_in, int circleIteration) {
@@ -797,22 +758,14 @@ __global__ void markOverlapsKernel(int *d_in, int circleIteration) {
     int circleIndex = threadIdx.x;
     int actualCircleIndex = circleIteration+threadIdx.x;
 
-    // int *d_in_updated = d_in + (patchYIndex*cuConstRendererParams.num_patches_x+patchXIndex) * SCAN_BLOCK_DIM;
     if (actualCircleIndex >= cuConstRendererParams.numCircles) {
         return;
     }
-    // printf("Analyzing patch (%d, %d) looking at %d\n", patchXIndex, patchYIndex, circleIndex);
 
     float minX = min(patchXIndex*cuConstRendererParams.patch_x, cuConstRendererParams.imageWidth);
     float minY = min(patchYIndex*cuConstRendererParams.patch_y, cuConstRendererParams.imageHeight);
     float maxX = min((patchXIndex+1)*cuConstRendererParams.patch_x, cuConstRendererParams.imageWidth);
     float maxY = min((patchYIndex+1)*cuConstRendererParams.patch_y, cuConstRendererParams.imageHeight);
-
-    // if (circleIteration == 0){
-    //     printf("(%d, %d, %d, %d): minX: %d, minY: %d, maxX: %d, maxY: %d\n", patchXIndex, patchYIndex, actualCircleIndex, circleIteration,
-    //     minX, minY, maxX, maxY);
-    // }
-
 
     int circleIndex3 = 3 * actualCircleIndex;
 
@@ -820,19 +773,8 @@ __global__ void markOverlapsKernel(int *d_in, int circleIteration) {
     float3 p = *(float3*)(&cuConstRendererParams.position[circleIndex3]);
     float  rad = cuConstRendererParams.radius[actualCircleIndex];
 
-
-    
-    // d_in[(patchYIndex*cuConstRendererParams.num_patches_x+patchXIndex)*SCAN_BLOCK_DIM+circleIndex] = 1;
-
-    // float minCircleX = static_cast<short>(cuConstRendererParams.imageWidth * (p.x - rad));
-    // float maxCircleX = static_cast<short>(cuConstRendererParams.imageWidth * (p.x + rad)) + 1;
-    // float minCircleY = static_cast<short>(cuConstRendererParams.imageHeight * (p.y - rad));
-    // float maxCircleY = static_cast<short>(cuConstRendererParams.imageHeight * (p.y + rad)) + 1;
-
-
-
-    d_in[(patchYIndex*cuConstRendererParams.num_patches_x+patchXIndex)*SCAN_BLOCK_DIM+circleIndex] = circleInBox(p.x, p.y, rad,  minX/1024.0,  maxX/1024.0,
-                 maxY/1024.0,  minY/1024.0);
+    d_in[(patchYIndex*cuConstRendererParams.num_patches_x+patchXIndex)*SCAN_BLOCK_DIM+circleIndex] = circleInBox(p.x, p.y, rad,  minX/cuConstRendererParams.imageWidth,  maxX/cuConstRendererParams.imageWidth,
+                 maxY/cuConstRendererParams.imageHeight,  minY/cuConstRendererParams.imageHeight);
 
 
 }
@@ -878,17 +820,12 @@ __global__ void extractIndicesKernel(int* d_in, int* d_out, int* d_reducedOut, i
 void
 CudaRenderer::render() {
 
-
     int patch_x = PATCH_X;
     int patch_y = PATCH_Y;
     int num_patches_x = (image->width +patch_x-1)/patch_x;
     int num_patches_y = (image->height+patch_y-1)/patch_y;
     int num_patches = num_patches_x*num_patches_y;
-    // int h_in[num_patches*SCAN_BLOCK_DIM] = {};
-    // int h_out[num_patches*SCAN_BLOCK_DIM] = {};
 
-
-    // Allocate device memory
     int *d_in, *d_out;
     int size = num_patches*SCAN_BLOCK_DIM*sizeof(int);
     cudaMalloc(&d_in, size);
@@ -905,87 +842,19 @@ CudaRenderer::render() {
                  (image->width/patch_y + renderBlockDim.y - 1) / renderBlockDim.y);
     
     dim3 renderPixelBlockDim(16, 16);
-    dim3 renderPixelGridDim((image->height + renderBlockDim.x - 1) / renderBlockDim.x, 
-                 (image->width + renderBlockDim.y - 1) / renderBlockDim.y);
+    dim3 renderPixelGridDim((image->height + renderPixelBlockDim.x - 1) / renderPixelBlockDim.x, 
+                 (image->width + renderPixelBlockDim.y - 1) / renderPixelBlockDim.y);
 
 
     for (int circleIteration=0; circleIteration<numCircles; circleIteration+=SCAN_BLOCK_DIM){
         cudaMemset(d_in, 0, size);
-        cudaMemset(d_out, 0, size);
+        // cudaMemset(d_out, 0, size);
         cudaMemset(d_reducedOut, -1, size);
-        // printf("I'm on circle iteration: %d\n", circleIteration);
-
-
         markOverlapsKernel<<<gridDim, blockDim>>>(d_in, circleIteration);
-        // cudaMemcpy(h_out, d_in, size, cudaMemcpyDeviceToHost);
-        // for (int i = 0; i < num_patches; i++) {
-        //     printf("marking overlap output for array %d:\n", i);
-        //     for (int j = 0; j < SCAN_BLOCK_DIM; j++) {
-        //         printf("%d ", h_out[i*SCAN_BLOCK_DIM+j]);
-        //     }
-        //     printf("\n");
-        // }
-
-            // Launch kernel with ARRAY_COUNT blocks and BLOCKSIZE threads per block
         exclusiveScanKernel<<<num_patches, SCAN_BLOCK_DIM>>>(d_in, d_out);
-
-            // cudaMemcpy(h_out, d_out, size, cudaMemcpyDeviceToHost);
-            // for (int i = 0; i < num_patches; i++) {
-            //     printf("exclusive output for array %d:\n", i);
-            //     for (int j = 0; j < SCAN_BLOCK_DIM; j++) {
-            //         printf("%d ", h_out[i*SCAN_BLOCK_DIM+j]);
-            //     }
-            //     printf("\n");
-            // }
-
-            // int *d_reducedOut;
-            // cudaMalloc(&d_reducedOut, size);
-            // cudaMemset(d_reducedOut, -1, size);
         extractIndicesKernel<<<num_patches, SCAN_BLOCK_DIM>>>(d_in, d_out, d_reducedOut, circleIteration);
-
-            // cudaMemcpy(h_out, d_reducedOut, size, cudaMemcpyDeviceToHost);
-            // for (int i = 0; i < num_patches; i++) {
-            //     printf("reduced output for array %d:\n", i);
-            //     for (int j = 0; j < SCAN_BLOCK_DIM; j++) {
-            //         printf("%d ", h_out[i*SCAN_BLOCK_DIM+j]);
-            //     }
-            //     printf("\n");
-            // }
-            // // Copy results back to host
-
-            // dim3 renderBlockDim(16, 16);
-            // dim3 renderGridDim((image->height/patch_x + renderBlockDim.x - 1) / renderBlockDim.x, 
-            //              (image->width/patch_y + renderBlockDim.y - 1) / renderBlockDim.y);
-        // kernelRenderPatch<<<renderGridDim, renderBlockDim>>>(patch_x, patch_y, d_reducedOut);
         kernelRenderPixel<<<renderPixelGridDim, renderPixelBlockDim>>>(patch_x, patch_y, d_reducedOut);
     }
-
-    
-
-    // // Display result for each array
-    // // cudaMemcpy(h_out, d_reducedOut, size, cudaMemcpyDeviceToHost);
-    // // for (int i = 0; i < num_patches; i++) {
-    // //     printf("reduced output for array %d:\n", i);
-    // //     for (int j = 0; j < SCAN_BLOCK_DIM; j++) {
-    // //         printf("%d ", h_out[i*SCAN_BLOCK_DIM+j]);
-    // //     }
-    // //     printf("\n");
-    // // }
-
-    // // // for each patch, figure out which circle overlaps with it
-    // // // store this inside of a list
-    // // // run exclusive scan
-    // // // run a gather kinda function to get a reduced list
-    // // // draw only those pixels in the patch
-    // cudaError_t err = cudaGetLastError();
-    // if (err != cudaSuccess) {
-    //     printf("CUDA error: %s\n", cudaGetErrorString(err));
-    // }
-    // // cudaDeviceSynchronize();
-    // //     // Free device memory
-    // cudaFree(d_in);
-    // cudaFree(d_out);
-    // // printf("no error\n");
 }
 
 
