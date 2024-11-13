@@ -805,8 +805,8 @@ __global__ void markOverlapsKernel(int *d_in, int circleIteration) {
 
     float minX = min(patchXIndex*cuConstRendererParams.patch_x, cuConstRendererParams.imageWidth);
     float minY = min(patchYIndex*cuConstRendererParams.patch_y, cuConstRendererParams.imageHeight);
-    float maxX = min((patchXIndex+1)*cuConstRendererParams.patch_x+1, cuConstRendererParams.imageWidth);
-    float maxY = min((patchYIndex+1)*cuConstRendererParams.patch_y+1, cuConstRendererParams.imageHeight);
+    float maxX = min((patchXIndex+1)*cuConstRendererParams.patch_x, cuConstRendererParams.imageWidth);
+    float maxY = min((patchYIndex+1)*cuConstRendererParams.patch_y, cuConstRendererParams.imageHeight);
 
     // if (circleIteration == 0){
     //     printf("(%d, %d, %d, %d): minX: %d, minY: %d, maxX: %d, maxY: %d\n", patchXIndex, patchYIndex, actualCircleIndex, circleIteration,
@@ -831,7 +831,7 @@ __global__ void markOverlapsKernel(int *d_in, int circleIteration) {
 
 
 
-    d_in[(patchYIndex*cuConstRendererParams.num_patches_x+patchXIndex)*SCAN_BLOCK_DIM+circleIndex] = circleInBoxConservative(p.x, p.y, rad,  minX/1024.0,  maxX/1024.0,
+    d_in[(patchYIndex*cuConstRendererParams.num_patches_x+patchXIndex)*SCAN_BLOCK_DIM+circleIndex] = circleInBox(p.x, p.y, rad,  minX/1024.0,  maxX/1024.0,
                  maxY/1024.0,  minY/1024.0);
 
 
